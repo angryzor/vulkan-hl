@@ -1,0 +1,111 @@
+-- This file has been generated from package.yaml by hpack version 0.20.0.
+--
+-- see: https://github.com/sol/hpack
+--
+-- hash: 2d1e1d332c53dbf116054956906c81742e91bae528b904f2793283d63a5ec388
+
+name:           vulkan-hl
+version:        0.1.0.0
+description:    Please see the README on GitHub at <https://github.com/githubuser/vulkan-hl#readme>
+homepage:       https://github.com/githubuser/vulkan-hl#readme
+bug-reports:    https://github.com/githubuser/vulkan-hl/issues
+author:         Author name here
+maintainer:     example@example.com
+copyright:      2018 Author name here
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+cabal-version:  >= 1.10
+
+extra-source-files:
+    ChangeLog.md
+    README.md
+
+source-repository head
+  type: git
+  location: https://github.com/githubuser/vulkan-hl
+
+library
+  hs-source-dirs:
+      src
+  build-depends:
+      GLFW-b
+    , base >=4.7 && <5
+    , bytestring
+    , linear
+    , monad-control
+    , mtl
+    , text
+    , uuid
+    , vector
+    , vector-sized
+    , vulkan
+  exposed-modules:
+      Graphics.Vulkan.HL.Core10.CommandBuffer
+      Graphics.Vulkan.HL.Core10.CommandBufferBuilding
+      Graphics.Vulkan.HL.Core10.CommandPool
+      Graphics.Vulkan.HL.Core10.Device
+      Graphics.Vulkan.HL.Core10.DeviceInitialization
+      Graphics.Vulkan.HL.Core10.ImageView
+      Graphics.Vulkan.HL.Core10.Pass
+      Graphics.Vulkan.HL.Core10.Pipeline
+      Graphics.Vulkan.HL.Core10.PipelineCache
+      Graphics.Vulkan.HL.Core10.PipelineLayout
+      Graphics.Vulkan.HL.Core10.Queue
+      Graphics.Vulkan.HL.Core10.QueueSemaphore
+      Graphics.Vulkan.HL.Core10.Shader
+      Graphics.Vulkan.HL.Exception
+      Graphics.Vulkan.HL.Extensions.VK_EXT_debug_utils
+      Graphics.Vulkan.HL.Extensions.VK_KHR_surface
+      Graphics.Vulkan.HL.Extensions.VK_KHR_swapchain
+      Util
+  other-modules:
+      Paths_vulkan_hl
+  default-language: Haskell2010
+
+executable vulkan-hl-exe
+  main-is: Main.hs
+  hs-source-dirs:
+      app
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N -optl "-Wl,--unresolved-symbols=ignore-in-object-files"
+  build-depends:
+      GLFW-b
+    , ansi-terminal
+    , base >=4.7 && <5
+    , bytestring
+    , linear
+    , monad-control
+    , monad-loops
+    , mtl
+    , text
+    , uuid
+    , vector
+    , vector-sized
+    , vulkan
+    , vulkan-hl
+  other-modules:
+      Paths_vulkan_hl
+  default-language: Haskell2010
+
+test-suite vulkan-hl-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  hs-source-dirs:
+      test
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      GLFW-b
+    , base >=4.7 && <5
+    , bytestring
+    , linear
+    , monad-control
+    , mtl
+    , text
+    , uuid
+    , vector
+    , vector-sized
+    , vulkan
+    , vulkan-hl
+  other-modules:
+      Paths_vulkan_hl
+  default-language: Haskell2010
