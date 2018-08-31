@@ -35,8 +35,8 @@ allocateCommandBuffers dev pool level count  = liftIO $
                                    , vkCommandPool = pool
                                    , vkLevel = level
                                    , vkCommandBufferCount = fromIntegral count
-                                   } $ \cbai ->
-  vulkanArrayR count $ vkAllocateCommandBuffers dev cbai
+                                   } $ \allocateInfoPtr ->
+  vulkanArrayR count $ vkAllocateCommandBuffers dev allocateInfoPtr
 
 freeCommandBuffers :: MonadIO m => VkDevice -> VkCommandPool -> [VkCommandBuffer] -> m ()
 freeCommandBuffers dev pool buffers = liftIO $
@@ -53,8 +53,8 @@ beginCommandBuffer flags buf = liftIO $
                                 , vkPNext = nullPtr
                                 , vkFlags = flags
                                 , vkPInheritanceInfo = nullPtr -- TODO: Implement
-                                } $ \cbbi ->
-  guardVkResult =<< vkBeginCommandBuffer buf cbbi
+                                } $ \beginInfoPtr ->
+  guardVkResult =<< vkBeginCommandBuffer buf beginInfoPtr
 
 endCommandBuffer :: MonadIO m => VkCommandBuffer -> m ()
 endCommandBuffer buf = liftIO $

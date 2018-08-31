@@ -69,8 +69,8 @@ createFramebuffer dev renderPass width height layers attachments = liftIO $
                                , vkWidth = width
                                , vkHeight = height
                                , vkLayers = layers
-                               } $ \fci ->
-  vulkanPtrR $ vkCreateFramebuffer dev fci nullPtr
+                               } $ \createInfoPtr ->
+  vulkanPtrR $ vkCreateFramebuffer dev createInfoPtr nullPtr
 
 destroyFramebuffer :: MonadIO m => VkDevice -> VkFramebuffer -> m ()
 destroyFramebuffer dev frameBuffer =
@@ -95,8 +95,8 @@ createRenderPass dev attachments subpasses dependencies = liftIO $ do
                                 , vkPSubpasses = subpassesPtr
                                 , vkDependencyCount = fromIntegral dependenciesLen
                                 , vkPDependencies = dependenciesPtr
-                                } $ \rpci ->
-    vulkanPtrR $ vkCreateRenderPass dev rpci nullPtr
+                                } $ \createInfoPtr ->
+    vulkanPtrR $ vkCreateRenderPass dev createInfoPtr nullPtr
 
 destroyRenderPass :: MonadIO m => VkDevice -> VkRenderPass -> m ()
 destroyRenderPass dev renderPass =

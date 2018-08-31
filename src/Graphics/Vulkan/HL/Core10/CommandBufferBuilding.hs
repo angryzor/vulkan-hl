@@ -1,12 +1,12 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE GADTs #-}
 
 module Graphics.Vulkan.HL.Core10.CommandBufferBuilding
-  ( cmdBeginRenderPass
-  , cmdEndRenderPass
-  , cmdBindPipeline
-  , cmdDraw
+  ( Command (..)
+  , record
+  , recordCommandBuffer
   ) where
 
 import Control.Exception
@@ -18,36 +18,60 @@ import Foreign.C.Types
 import Foreign.Ptr
 import Foreign.Marshal
 import Foreign.Marshal.Array
+import Graphics.Vulkan.Core10.CommandBuffer
 import Graphics.Vulkan.Core10.CommandBufferBuilding
 import Graphics.Vulkan.Core10.Core
 import Graphics.Vulkan.Core10.DeviceInitialization
 import Graphics.Vulkan.Core10.Pass
 import Graphics.Vulkan.Core10.Pipeline
 import Graphics.Vulkan.Core10.Queue
+import Graphics.Vulkan.HL.Core10.CommandBuffer
 import Graphics.Vulkan.HL.Exception
 import Util
 
-cmdBeginRenderPass :: MonadIO m => VkCommandBuffer -> VkRenderPass -> VkFramebuffer -> VkRect2D -> [VkClearValue] -> VkSubpassContents -> m ()
-cmdBeginRenderPass buf renderPass frameBuffer renderArea clearValues contents = liftIO $
-  withArrayLen clearValues $ \clearValuesLen clearValuesPtr ->
-  with VkRenderPassBeginInfo { vkSType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO
-                             , vkPNext = nullPtr
-                             , vkRenderPass = renderPass
-                             , vkFramebuffer = frameBuffer
-                             , vkRenderArea = renderArea
-                             , vkClearValueCount = fromIntegral clearValuesLen
-                             , vkPClearValues = clearValuesPtr
-                             } $ \rpbi ->
-  vkCmdBeginRenderPass buf rpbi contents
+data Command
+  = BeginRenderPass { renderPass :: VkRenderPass
+                    , framebuffer :: VkFramebuffer
+                    , renderArea :: VkRect2D
+                    , clearValues :: [VkClearValue]
+                    , contents :: VkSubpassContents
+                    }
+  | EndRenderPass
+  | BindPipeline { pipelineBindPoint :: VkPipelineBindPoint
+                 , pipeline :: VkPipeline
+                 }
+  | Draw { vertexCount :: Word32
+         , instanceCount :: Word32
+         , firstVertex :: Word32
+         , firstInstance :: Word32
+         }
 
-cmdEndRenderPass :: MonadIO m => VkCommandBuffer -> m ()
-cmdEndRenderPass buf =
-  liftIO $ vkCmdEndRenderPass buf
+record :: MonadIO m => Command -> VkCommandBuffer -> m ()
+record command buf = liftIO $
+  case command of
+    BeginRenderPass{..} ->
+      withArrayLen clearValues $ \clearValuesLen clearValuesPtr ->
+      with VkRenderPassBeginInfo { vkSType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO
+                                , vkPNext = nullPtr
+                                , vkRenderPass = renderPass
+                                , vkFramebuffer = framebuffer
+                                , vkRenderArea = renderArea
+                                , vkClearValueCount = fromIntegral clearValuesLen
+                                , vkPClearValues = clearValuesPtr
+                                } $ \createInfoPtr ->
+      vkCmdBeginRenderPass buf createInfoPtr contents
 
-cmdBindPipeline :: MonadIO m => VkCommandBuffer -> VkPipelineBindPoint -> VkPipeline -> m ()
-cmdBindPipeline buf pipelineBindPoint pipeline =
-  liftIO $ vkCmdBindPipeline buf pipelineBindPoint pipeline
+    EndRenderPass ->
+      vkCmdEndRenderPass buf
 
-cmdDraw :: MonadIO m => VkCommandBuffer -> Word32 -> Word32 -> Word32 -> Word32 -> m ()
-cmdDraw buf vertexCount instanceCount firstVertex firstInstance =
-  liftIO $ vkCmdDraw buf vertexCount instanceCount firstVertex firstInstance
+    BindPipeline{..} ->
+      vkCmdBindPipeline buf pipelineBindPoint pipeline
+
+    Draw{..} ->
+      vkCmdDraw buf vertexCount instanceCount firstVertex firstInstance
+
+recordCommandBuffer :: MonadIO m => VkCommandBufferUsageFlags -> VkCommandBuffer -> [Command] -> m ()
+recordCommandBuffer flags buf commands = liftIO $ do
+  beginCommandBuffer flags buf
+  mapM_ (flip record buf) commands
+  endCommandBuffer buf

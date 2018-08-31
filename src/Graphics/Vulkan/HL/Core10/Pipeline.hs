@@ -287,7 +287,7 @@ convertGraphicsPipelineCreateInfo GraphicsPipelineCreateInfo{..} = do
                                           , vkBasePipelineIndex = fromIntegral basePipelineIndex
                                           }
 
-
+-- TODO: Correctly handle partial failures (Vulkan Spec Section 9.4)
 createGraphicsPipelines :: MonadIO m => VkDevice -> VkPipelineCache -> [GraphicsPipelineCreateInfo] -> m [VkPipeline]
 createGraphicsPipelines dev cache infos = liftIO $ do
   convertedInfos <- traverse convertGraphicsPipelineCreateInfo infos

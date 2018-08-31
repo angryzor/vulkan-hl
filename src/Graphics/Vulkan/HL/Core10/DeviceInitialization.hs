@@ -67,8 +67,8 @@ createInstance appName appVersion engineName engineVersion layers extensions = l
                             , vkPPEnabledLayerNames = layerNamesPtr
                             , vkEnabledExtensionCount = fromIntegral extensionCount
                             , vkPPEnabledExtensionNames = extensionsPtr
-                            } $ \instanceCreateInfoPtr ->
-  vulkanPtrR $ vkCreateInstance instanceCreateInfoPtr nullPtr
+                            } $ \createInfoPtr ->
+  vulkanPtrR $ vkCreateInstance createInfoPtr nullPtr
 
 destroyInstance :: MonadIO m => VkInstance -> m ()
 destroyInstance inst =

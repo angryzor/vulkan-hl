@@ -34,8 +34,8 @@ createImageView dev viewType format components subresourceRange image = liftIO $
                              , vkFormat = format
                              , vkComponents = components
                              , vkSubresourceRange = subresourceRange
-                             } $ \ivci ->
-  vulkanPtrR $ vkCreateImageView dev ivci nullPtr
+                             } $ \createInfoPtr ->
+  vulkanPtrR $ vkCreateImageView dev createInfoPtr nullPtr
 
 destroyImageView :: MonadIO m => VkDevice -> VkImageView -> m ()
 destroyImageView dev imageView =

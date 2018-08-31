@@ -35,8 +35,8 @@ createPipelineLayout dev setLayouts pushConstantRanges = liftIO $
                                   , vkPSetLayouts = setLayoutsPtr
                                   , vkPushConstantRangeCount = fromIntegral pushConstantRangesLen
                                   , vkPPushConstantRanges = pushConstantRangesPtr
-                                  } $ \plci ->
-  vulkanPtrR $ vkCreatePipelineLayout dev plci nullPtr
+                                  } $ \createInfoPtr ->
+  vulkanPtrR $ vkCreatePipelineLayout dev createInfoPtr nullPtr
 
 destroyPipelineLayout :: MonadIO m => VkDevice -> VkPipelineLayout -> m ()
 destroyPipelineLayout dev layout =

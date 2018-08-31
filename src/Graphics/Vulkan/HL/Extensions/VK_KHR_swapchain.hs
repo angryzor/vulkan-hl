@@ -69,8 +69,8 @@ createSwapchain SwapchainCreateInfo{..} surface dev = liftIO $
                                 , vkPresentMode = presentMode
                                 , vkClipped = clipped
                                 , vkOldSwapchain = oldSwapChain
-                                } $ \sciPtr ->
-  vulkanPtrR $ vkCreateSwapchainKHR dev sciPtr nullPtr
+                                } $ \createInfoPtr ->
+  vulkanPtrR $ vkCreateSwapchainKHR dev createInfoPtr nullPtr
 
 destroySwapchain :: MonadIO m => VkDevice -> VkSwapchainKHR -> m ()
 destroySwapchain dev swapchain =

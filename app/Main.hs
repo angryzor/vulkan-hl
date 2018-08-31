@@ -204,9 +204,10 @@ main = scope $ do
     deviceSurfaceFormats <- getPhysicalDeviceSurfaceFormats surf physDev
     devicePresentModes <- getPhysicalDeviceSurfacePresentModes surf physDev
 
-    let surfaceFormat = head deviceSurfaceFormats
+    let surfaceFormat = last deviceSurfaceFormats
     let presentMode = head devicePresentModes
     let extent = vkCurrentExtent deviceSurfaceCapabilities
+    liftIO . print $ surfaceFormat
 
     availQueues <- getPhysicalDeviceQueueFamilyProperties physDev
     presentSupports <- traverse (getPhysicalDeviceSurfaceSupport surf physDev) [0..fromIntegral (length availQueues) - 1]
@@ -278,28 +279,28 @@ main = scope $ do
       commandPool <- track $ withCommandPool dev zeroBits 0
       commandBuffers <- track $ withCommandBuffers dev commandPool VK_COMMAND_BUFFER_LEVEL_PRIMARY (length imageViews)
 
-      flip traverse (zip commandBuffers frameBuffers) $ \(buf, frameBuffer) -> do
-        beginCommandBuffer VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT buf
-        cmdBeginRenderPass buf renderPass frameBuffer (VkRect2D (VkOffset2D 0 0) extent) [ VkColor . VkFloat32 $ SV.fromTuple (CFloat 0.0, CFloat 0.0, CFloat 0.0, CFloat 0.0) ] VK_SUBPASS_CONTENTS_INLINE
-        cmdBindPipeline buf VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
-        cmdDraw buf 3 1 0 0
-        cmdEndRenderPass buf
-        endCommandBuffer buf
+      flip traverse (zip commandBuffers frameBuffers) $ \(buf, frameBuffer) ->
+        recordCommandBuffer VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT buf
+          [ BeginRenderPass renderPass frameBuffer (VkRect2D (VkOffset2D 0 0) extent) [ VkColor . VkFloat32 $ SV.fromTuple (CFloat 0.0, CFloat 0.0, CFloat 0.0, CFloat 0.0) ] VK_SUBPASS_CONTENTS_INLINE
+          , BindPipeline VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
+          , Draw 3 1 0 0
+          , EndRenderPass
+          ]
 
       imageAvailable <- track $ withSemaphore dev
       renderFinished <- track $ withSemaphore dev
 
-      whileM_ (not <$> liftIO (windowShouldClose wnd)) $ do
+      imgIdx <- acquireNextImage dev swapchain (maxBound :: Word64) imageAvailable VK_NULL_HANDLE
+
+      queueSubmit [ SubmitInfo { waitSemaphores = [ (imageAvailable, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) ]
+                               , commandBuffers = [ commandBuffers !! fromIntegral imgIdx ]
+                               , signalSemaphores = [ renderFinished ]
+                               }
+                  ] VK_NULL_HANDLE graphicsQueue
+      queuePresent [ renderFinished ] [ (swapchain, imgIdx) ] graphicsQueue
+
+      whileM_ (not <$> liftIO (windowShouldClose wnd)) $
         liftIO $ pollEvents
-
-        imgIdx <- acquireNextImage dev swapchain (maxBound :: Word64) imageAvailable VK_NULL_HANDLE
-
-        queueSubmit [ SubmitInfo { waitSemaphores = [ (imageAvailable, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) ]
-                                 , commandBuffers = [ commandBuffers !! fromIntegral imgIdx ]
-                                 , signalSemaphores = [ renderFinished ]
-                                 }
-                    ] VK_NULL_HANDLE graphicsQueue
-        queuePresent [ renderFinished ] [ (swapchain, imgIdx) ] graphicsQueue
 
     liftIO $ destroyWindow wnd
 

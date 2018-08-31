@@ -29,8 +29,8 @@ createSemaphore dev = liftIO $
   with VkSemaphoreCreateInfo { vkSType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO
                              , vkPNext = nullPtr
                              , vkFlags = zeroBits
-                             } $ \sci ->
-  vulkanPtrR $ vkCreateSemaphore dev sci nullPtr
+                             } $ \createInfoPtr ->
+  vulkanPtrR $ vkCreateSemaphore dev createInfoPtr nullPtr
 
 destroySemaphore :: MonadIO m => VkDevice -> VkSemaphore -> m ()
 destroySemaphore dev semaphore =

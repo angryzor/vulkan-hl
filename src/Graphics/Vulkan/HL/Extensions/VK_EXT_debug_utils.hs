@@ -111,9 +111,9 @@ createDebugUtilsMessenger messageType messageSeverity callback inst = liftIO $
                                           , vkMessageType = messageType
                                           , vkPfnUserCallback = castFunPtrToPtr debugUtilsMessengerCallbackPtr
                                           , vkPUserData = nullPtr
-                                          } $ \debugUtilsMessengerCreateInfoEXTPtr ->
+                                          } $ \createInfoPtr ->
   initInstanceCmds inst >>= \instanceCmds ->
-  vulkanPtrR $ createDebugUtilsMessengerEXT instanceCmds inst debugUtilsMessengerCreateInfoEXTPtr nullPtr
+  vulkanPtrR $ createDebugUtilsMessengerEXT instanceCmds inst createInfoPtr nullPtr
 
 destroyDebugUtilsMessenger :: MonadIO m => VkInstance -> VkDebugUtilsMessengerEXT -> m ()
 destroyDebugUtilsMessenger inst messenger = liftIO $

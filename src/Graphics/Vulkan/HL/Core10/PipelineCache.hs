@@ -26,17 +26,17 @@ import Util
 
 createPipelineCache :: MonadIO m => VkDevice -> Maybe BS.ByteString -> m VkPipelineCache
 createPipelineCache dev maybeData = liftIO $
-  withPCCI maybeData $ \pcci ->
-  vulkanPtrR $ vkCreatePipelineCache dev pcci nullPtr
+  withCreateInfo maybeData $ \createInfoPtr ->
+  vulkanPtrR $ vkCreatePipelineCache dev createInfoPtr nullPtr
   where
-    withPCCI Nothing next =
+    withCreateInfo Nothing next =
       with VkPipelineCacheCreateInfo { vkSType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO
                                      , vkPNext = nullPtr
                                      , vkFlags = zeroBits
                                      , vkInitialDataSize = 0
                                      , vkPInitialData = nullPtr
                                      } next
-    withPCCI (Just dataStr) next =
+    withCreateInfo (Just dataStr) next =
       BS.useAsCString dataStr $ \dataStrPtr ->
       with VkPipelineCacheCreateInfo { vkSType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO
                                      , vkPNext = nullPtr

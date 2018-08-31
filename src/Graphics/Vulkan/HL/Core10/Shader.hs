@@ -32,8 +32,8 @@ createShaderModule dev code = liftIO $
                                 , vkFlags = zeroBits
                                 , vkCodeSize = fromIntegral $ BS.length code
                                 , vkPCode = castPtr codePtr
-                                } $ \smci ->
-  vulkanPtrR $ vkCreateShaderModule dev smci nullPtr
+                                } $ \createInfoPtr ->
+  vulkanPtrR $ vkCreateShaderModule dev createInfoPtr nullPtr
 
 destroyShaderModule :: MonadIO m => VkDevice -> VkShaderModule -> m ()
 destroyShaderModule dev mod =

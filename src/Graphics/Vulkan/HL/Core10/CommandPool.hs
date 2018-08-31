@@ -29,8 +29,8 @@ createCommandPool dev flags queueFamilyIndex = liftIO $
                              , vkPNext = nullPtr
                              , vkFlags = flags
                              , vkQueueFamilyIndex = queueFamilyIndex
-                             } $ \cpci ->
-  vulkanPtrR $ vkCreateCommandPool dev cpci nullPtr
+                             } $ \createInfoPtr ->
+  vulkanPtrR $ vkCreateCommandPool dev createInfoPtr nullPtr
 
 destroyCommandPool :: MonadIO m => VkDevice -> VkCommandPool -> m ()
 destroyCommandPool dev imageView =
