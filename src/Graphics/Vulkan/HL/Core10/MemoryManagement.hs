@@ -2,7 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RecordWildCards #-}
 
-module Graphics.Vulkan.HL.Core10.Buffer
+module Graphics.Vulkan.HL.Core10.MemoryManagement
   ( getBufferMemoryRequirements
   , bindBufferMemory
   , getImageMemoryRequirements

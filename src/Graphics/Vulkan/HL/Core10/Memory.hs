@@ -6,6 +6,12 @@ module Graphics.Vulkan.HL.Core10.Memory
   ( allocateMemory
   , freeMemory
   , withMemory
+  , mapMemory
+  , unmapMemory
+  , mappingMemory
+  , flushMappedMemoryRanges
+  , invalidateMappedMemoryRanges
+  , getDeviceMemoryCommitment
   ) where
 
 import Control.Exception
@@ -23,8 +29,8 @@ import Graphics.Vulkan.Core10.Memory
 import Graphics.Vulkan.HL.Exception
 import Util
 
-allocateMemory :: MonadIO m => VkDevice -> VkDeviceSize -> Word32 -> m VkDeviceMemory
-allocateMemory dev allocationSize memoryTypeIndex = liftIO $
+allocateMemory :: MonadIO m => VkDevice -> Word32 -> VkDeviceSize -> m VkDeviceMemory
+allocateMemory dev memoryTypeIndex allocationSize = liftIO $
   with VkMemoryAllocateInfo { vkSType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO
                             , vkPNext = nullPtr
                             , vkAllocationSize = allocationSize
@@ -36,17 +42,21 @@ freeMemory :: MonadIO m => VkDevice -> VkDeviceMemory -> m ()
 freeMemory dev memory =
   liftIO $ vkFreeMemory dev memory nullPtr
 
-withMemory :: MonadBaseControl IO m => VkDevice -> VkDeviceSize -> Word32 -> (VkDeviceMemory -> m a) -> m a
-withMemory dev allocationSize memoryTypeIndex =
-  liftBaseOp $ bracket (allocateMemory dev allocationSize memoryTypeIndex) (freeMemory dev)
+withMemory :: MonadBaseControl IO m => VkDevice -> Word32 -> VkDeviceSize -> (VkDeviceMemory -> m a) -> m a
+withMemory dev memoryTypeIndex allocationSize =
+  liftBaseOp $ bracket (allocateMemory dev memoryTypeIndex allocationSize) (freeMemory dev)
 
-mapMemory :: MonadIO m => VkDevice -> VkDeviceMemory -> VkDeviceSize -> VkDeviceSize -> m (Ptr ())
+mapMemory :: MonadIO m => VkDevice -> VkDeviceMemory -> VkDeviceSize -> VkDeviceSize -> m (Ptr d)
 mapMemory dev memory offset size =
-  liftIO . vulkanPtrR $ vkMapMemory dev memory offset size zeroBits
+  liftIO . fmap castPtr . vulkanPtrR $ vkMapMemory dev memory offset size zeroBits
 
 unmapMemory :: MonadIO m => VkDevice -> VkDeviceMemory -> m ()
 unmapMemory dev memory =
   liftIO $ vkUnmapMemory dev memory
+
+mappingMemory :: MonadBaseControl IO m => VkDevice -> VkDeviceMemory -> VkDeviceSize -> VkDeviceSize -> (Ptr d -> m a) -> m a
+mappingMemory dev memory offset size =
+  liftBaseOp $ bracket (mapMemory dev memory offset size) (const $ unmapMemory dev memory)
 
 flushMappedMemoryRanges :: MonadIO m => VkDevice -> [VkMappedMemoryRange] -> m ()
 flushMappedMemoryRanges dev memoryRanges = liftIO $
@@ -58,6 +68,6 @@ invalidateMappedMemoryRanges dev memoryRanges = liftIO $
   withArrayLen memoryRanges $ \memoryRangesLen memoryRangesPtr ->
   guardVkResult =<< vkInvalidateMappedMemoryRanges dev (fromIntegral memoryRangesLen) memoryRangesPtr
 
-deviceMemoryCommitment :: MonadIO m => VkDevice -> VkDeviceMemory -> m VkDeviceSize
-deviceMemoryCommitment dev memory =
+getDeviceMemoryCommitment :: MonadIO m => VkDevice -> VkDeviceMemory -> m VkDeviceSize
+getDeviceMemoryCommitment dev memory =
   liftIO . vulkanPtr $ vkGetDeviceMemoryCommitment dev memory

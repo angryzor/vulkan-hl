@@ -24,6 +24,8 @@ import Graphics.Vulkan.Core10.Constants
 import Graphics.Vulkan.Core10.Core
 import Graphics.Vulkan.Core10.DeviceInitialization
 import Graphics.Vulkan.Core10.Image
+import Graphics.Vulkan.Core10.Memory
+import Graphics.Vulkan.Core10.MemoryManagement
 import Graphics.Vulkan.Core10.Pass
 import Graphics.Vulkan.Core10.Pipeline
 import Graphics.Vulkan.Core10.PipelineCache
@@ -34,12 +36,15 @@ import qualified Graphics.Vulkan.Core10.ImageView as IV
 import Graphics.Vulkan.Extensions.VK_EXT_debug_utils
 import Graphics.Vulkan.Extensions.VK_KHR_surface as S
 import Graphics.Vulkan.Extensions.VK_KHR_swapchain
+import Graphics.Vulkan.HL.Core10.Buffer
 import Graphics.Vulkan.HL.Core10.CommandBuffer
 import Graphics.Vulkan.HL.Core10.CommandBufferBuilding
 import Graphics.Vulkan.HL.Core10.CommandPool
 import Graphics.Vulkan.HL.Core10.Device
 import Graphics.Vulkan.HL.Core10.DeviceInitialization
 import Graphics.Vulkan.HL.Core10.ImageView
+import Graphics.Vulkan.HL.Core10.Memory
+import Graphics.Vulkan.HL.Core10.MemoryManagement
 import Graphics.Vulkan.HL.Core10.Pass
 import Graphics.Vulkan.HL.Core10.Pipeline as HP
 import Graphics.Vulkan.HL.Core10.PipelineCache
@@ -54,6 +59,9 @@ import Foreign.C.String
 import Foreign.C.Types
 import Foreign.Marshal.Array
 import Foreign.Ptr
+import Foreign.Storable
+import Linear.V2
+import Linear.V3
 import Linear.V4
 import System.Console.ANSI
 import Util
@@ -87,6 +95,48 @@ debugMessage mType mSeverity cbData = do
 --   print =<< getPhysicalDeviceQueueFamilyProperties dev
 --   print =<< getPhysicalDeviceMemoryProperties dev
 
+data MyVert = MyVert { position :: V2 CFloat
+                     , color :: V3 CFloat
+                     }
+
+instance Storable MyVert where
+  sizeOf _ = sizeOf (undefined :: V2 CFloat) + sizeOf (undefined :: V3 CFloat)
+  alignment _ = max (alignment (undefined :: V2 CFloat)) (alignment (undefined :: V3 CFloat))
+  peek ptr = MyVert <$> peek (plusPtr ptr $ 0)
+                    <*> peek (plusPtr ptr . sizeOf $ (undefined :: V2 CFloat))
+  poke ptr poked = poke (plusPtr ptr $ 0) (position (poked :: MyVert))
+                *> poke (plusPtr ptr . sizeOf $ (undefined :: V2 CFloat)) (color (poked :: MyVert))
+
+triangle :: [MyVert]
+triangle = [ MyVert { position = V2 0.0 (-0.5)
+                    , color = V3 1.0 0.0 0.0
+                    }
+           , MyVert { position = V2 0.5 0.5
+                    , color = V3 0.0 1.0 0.0
+                    }
+           , MyVert { position = V2 (-0.5) 0.5
+                    , color = V3 0.0 0.0 1.0
+                    }
+           ]
+
+quadVerts :: [MyVert]
+quadVerts = [ MyVert { position = V2 (-0.5) (-0.5)
+                     , color = V3 1.0 0.0 0.0
+                     }
+            , MyVert { position = V2 0.5 (-0.5)
+                     , color = V3 0.0 1.0 0.0
+                     }
+            , MyVert { position = V2 0.5 0.5
+                     , color = V3 0.0 0.0 1.0
+                     }
+            , MyVert { position = V2 (-0.5) 0.5
+                     , color = V3 1.0 1.0 1.0
+                     }
+            ]
+
+quadIndices :: [Word16]
+quadIndices = [0,1,2,2,3,0]
+
 type Scope a = ContT a IO a
 
 scope :: MonadIO m => Scope a -> m a
@@ -114,8 +164,22 @@ withMyPipelines dev extent renderPass next = scope $ do
                                                                                                                    , name = "main"
                                                                                                                    }
                                                                                    ]
-                                                                        , vertexInputState = PipelineVertexInputStateCreateInfo { vertexBindingDescriptions = []
-                                                                                                                                , vertexAttributeDescriptions = []
+                                                                        , vertexInputState = PipelineVertexInputStateCreateInfo { vertexBindingDescriptions = [ VkVertexInputBindingDescription { vkBinding = 0
+                                                                                                                                                                                                , vkStride = fromIntegral . sizeOf . head $ quadVerts
+                                                                                                                                                                                                , vkInputRate = VK_VERTEX_INPUT_RATE_VERTEX
+                                                                                                                                                                                                }
+                                                                                                                                                              ]
+                                                                                                                                , vertexAttributeDescriptions = [ VkVertexInputAttributeDescription { vkBinding = 0
+                                                                                                                                                                                                    , vkLocation = 0
+                                                                                                                                                                                                    , vkFormat = VK_FORMAT_R32G32_SFLOAT
+                                                                                                                                                                                                    , vkOffset = 0
+                                                                                                                                                                                                    }
+                                                                                                                                                                , VkVertexInputAttributeDescription { vkBinding = 0
+                                                                                                                                                                                                    , vkLocation = 1
+                                                                                                                                                                                                    , vkFormat = VK_FORMAT_R32G32B32_SFLOAT
+                                                                                                                                                                                                    , vkOffset = fromIntegral . sizeOf . position . head $ quadVerts
+                                                                                                                                                                                                    }
+                                                                                                                                                                ]
                                                                                                                                 }
                                                                         , inputAssemblyState = PipelineInputAssemblyStateCreateInfo { topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
                                                                                                                                     , primitiveRestartEnable = VK_FALSE
@@ -172,6 +236,20 @@ withMyPipelines dev extent renderPass next = scope $ do
   --             ]
   -- let geo = fromIndexedVerts verts faces
   -- someFunc
+
+withBufferAndMemory :: VkPhysicalDevice -> VkDevice -> VkDeviceSize -> VkBufferUsageFlags -> VkMemoryPropertyFlags -> (VkBuffer -> VkDeviceMemory -> IO a) -> IO a
+withBufferAndMemory physDev dev size usage properties next = scope $ do
+  vertexBuffer <- track $ withBuffer dev zeroBits size usage VK_SHARING_MODE_EXCLUSIVE []
+  memoryReq <- getBufferMemoryRequirements dev vertexBuffer
+
+  deviceMemProps <- getPhysicalDeviceMemoryProperties physDev
+
+  let Just memoryType = findIndex (\(memoryType,idx) -> testBit (vkMemoryTypeBits memoryReq) idx && memoryType .&. properties == properties) $ zip (vkPropertyFlags <$> memoryTypes deviceMemProps) [0..]
+
+  vertexBufferMemory <- track $ withMemory dev (fromIntegral memoryType) (Graphics.Vulkan.Core10.MemoryManagement.vkSize memoryReq)
+  bindBufferMemory dev vertexBuffer vertexBufferMemory 0
+
+  liftIO $ next vertexBuffer vertexBufferMemory
 
 main :: IO ()
 main = scope $ do
@@ -240,6 +318,24 @@ main = scope $ do
 
       liftIO $ print imageViews
 
+      let vertexBufferSize = (fromIntegral ((*) <$> length <*> sizeOf . head $ quadVerts))
+
+      (vertexStagingBuffer, vertexStagingBufferMemory) <- track $ withBufferAndMemory physDev dev vertexBufferSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) . curry
+      (vertexBuffer, vertexBufferMemory) <- track $ withBufferAndMemory physDev dev vertexBufferSize (VK_BUFFER_USAGE_TRANSFER_DST_BIT .|. VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT . curry
+
+      let indexBufferSize = (fromIntegral ((*) <$> length <*> sizeOf . head $ quadIndices))
+
+      (indexStagingBuffer, indexStagingBufferMemory) <- track $ withBufferAndMemory physDev dev indexBufferSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) . curry
+      (indexBuffer, indexBufferMemory) <- track $ withBufferAndMemory physDev dev indexBufferSize (VK_BUFFER_USAGE_TRANSFER_DST_BIT .|. VK_BUFFER_USAGE_INDEX_BUFFER_BIT) VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT . curry
+
+      scope $ do
+        memoryPtr <- track $ mappingMemory dev vertexStagingBufferMemory 0 vertexBufferSize
+        liftIO $ pokeArray memoryPtr quadVerts
+
+      scope $ do
+        memoryPtr <- track $ mappingMemory dev indexStagingBufferMemory 0 indexBufferSize
+        liftIO $ pokeArray memoryPtr quadIndices
+
       renderPass <- track $ withRenderPass dev [ VkAttachmentDescription { vkFlags = zeroBits
                                                                          , vkFormat = S.vkFormat surfaceFormat
                                                                          , vkSamples = VK_SAMPLE_COUNT_1_BIT
@@ -277,13 +373,42 @@ main = scope $ do
       frameBuffers <- traverse (track . withFramebuffer dev renderPass (vkWidth (extent :: VkExtent2D)) (vkHeight (extent :: VkExtent2D)) 1 . (:[])) imageViews
 
       commandPool <- track $ withCommandPool dev zeroBits 0
+
+      scope $ do
+        [copyBuffer] <- track $ withCommandBuffers dev commandPool VK_COMMAND_BUFFER_LEVEL_PRIMARY 1
+        recordCommandBuffer VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT copyBuffer
+          [ CopyBuffer vertexStagingBuffer vertexBuffer [ VkBufferCopy { vkSrcOffset = 0, vkDstOffset = 0, vkSize = vertexBufferSize } ]
+          ]
+
+        queueSubmit [ SubmitInfo { waitSemaphores = []
+                                , commandBuffers = [ copyBuffer ]
+                                , signalSemaphores = []
+                                }
+                    ] VK_NULL_HANDLE graphicsQueue
+        queueWaitIdle graphicsQueue
+
+      scope $ do
+        [copyBuffer] <- track $ withCommandBuffers dev commandPool VK_COMMAND_BUFFER_LEVEL_PRIMARY 1
+        recordCommandBuffer VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT copyBuffer
+          [ CopyBuffer indexStagingBuffer indexBuffer [ VkBufferCopy { vkSrcOffset = 0, vkDstOffset = 0, vkSize = indexBufferSize } ]
+          ]
+
+        queueSubmit [ SubmitInfo { waitSemaphores = []
+                                , commandBuffers = [ copyBuffer ]
+                                , signalSemaphores = []
+                                }
+                    ] VK_NULL_HANDLE graphicsQueue
+        queueWaitIdle graphicsQueue
+
       commandBuffers <- track $ withCommandBuffers dev commandPool VK_COMMAND_BUFFER_LEVEL_PRIMARY (length imageViews)
 
       flip traverse (zip commandBuffers frameBuffers) $ \(buf, frameBuffer) ->
         recordCommandBuffer VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT buf
           [ BeginRenderPass renderPass frameBuffer (VkRect2D (VkOffset2D 0 0) extent) [ VkColor . VkFloat32 $ SV.fromTuple (CFloat 0.0, CFloat 0.0, CFloat 0.0, CFloat 0.0) ] VK_SUBPASS_CONTENTS_INLINE
           , BindPipeline VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
-          , Draw 3 1 0 0
+          , BindVertexBuffers 0 [ VertexBufferBinding { buffer = vertexBuffer, offset = 0 } ]
+          , BindIndexBuffer indexBuffer 0 VK_INDEX_TYPE_UINT16
+          , DrawIndexed (fromIntegral . length $ quadIndices) 1 0 0 0
           , EndRenderPass
           ]
 
@@ -301,6 +426,8 @@ main = scope $ do
 
       whileM_ (not <$> liftIO (windowShouldClose wnd)) $
         liftIO $ pollEvents
+
+      deviceWaitIdle dev
 
     liftIO $ destroyWindow wnd
 

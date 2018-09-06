@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 2d1e1d332c53dbf116054956906c81742e91bae528b904f2793283d63a5ec388
+-- hash: 515bebdea2193552872e53d5e48e3b3a9257cf00d8930ae70f385067c894536a
 
 name:           vulkan-hl
 version:        0.1.0.0
@@ -41,12 +41,15 @@ library
     , vector-sized
     , vulkan
   exposed-modules:
+      Graphics.Vulkan.HL.Core10.Buffer
       Graphics.Vulkan.HL.Core10.CommandBuffer
       Graphics.Vulkan.HL.Core10.CommandBufferBuilding
       Graphics.Vulkan.HL.Core10.CommandPool
       Graphics.Vulkan.HL.Core10.Device
       Graphics.Vulkan.HL.Core10.DeviceInitialization
       Graphics.Vulkan.HL.Core10.ImageView
+      Graphics.Vulkan.HL.Core10.Memory
+      Graphics.Vulkan.HL.Core10.MemoryManagement
       Graphics.Vulkan.HL.Core10.Pass
       Graphics.Vulkan.HL.Core10.Pipeline
       Graphics.Vulkan.HL.Core10.PipelineCache
