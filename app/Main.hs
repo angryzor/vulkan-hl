@@ -5,6 +5,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Main where
 
@@ -20,9 +21,12 @@ import Graphics.UI.GLFW as GLFW
 import Graphics.Vulkan.Core10.Buffer
 import Graphics.Vulkan.Core10.CommandBuffer
 import Graphics.Vulkan.Core10.CommandBufferBuilding
+import Graphics.Vulkan.Core10.CommandPool
 import Graphics.Vulkan.Core10.Constants
 import Graphics.Vulkan.Core10.Core
+import Graphics.Vulkan.Core10.DescriptorSet
 import Graphics.Vulkan.Core10.DeviceInitialization
+import Graphics.Vulkan.Core10.Fence
 import Graphics.Vulkan.Core10.Image
 import Graphics.Vulkan.Core10.Memory
 import Graphics.Vulkan.Core10.MemoryManagement
@@ -40,8 +44,10 @@ import Graphics.Vulkan.HL.Core10.Buffer
 import Graphics.Vulkan.HL.Core10.CommandBuffer
 import Graphics.Vulkan.HL.Core10.CommandBufferBuilding
 import Graphics.Vulkan.HL.Core10.CommandPool
+import Graphics.Vulkan.HL.Core10.DescriptorSet
 import Graphics.Vulkan.HL.Core10.Device
 import Graphics.Vulkan.HL.Core10.DeviceInitialization
+import Graphics.Vulkan.HL.Core10.Fence
 import Graphics.Vulkan.HL.Core10.ImageView
 import Graphics.Vulkan.HL.Core10.Memory
 import Graphics.Vulkan.HL.Core10.MemoryManagement
@@ -60,6 +66,7 @@ import Foreign.C.Types
 import Foreign.Marshal.Array
 import Foreign.Ptr
 import Foreign.Storable
+import Linear.Matrix
 import Linear.V2
 import Linear.V3
 import Linear.V4
@@ -102,10 +109,25 @@ data MyVert = MyVert { position :: V2 CFloat
 instance Storable MyVert where
   sizeOf _ = sizeOf (undefined :: V2 CFloat) + sizeOf (undefined :: V3 CFloat)
   alignment _ = max (alignment (undefined :: V2 CFloat)) (alignment (undefined :: V3 CFloat))
-  peek ptr = MyVert <$> peek (plusPtr ptr $ 0)
+  peek ptr = MyVert <$> peek (plusPtr ptr 0)
                     <*> peek (plusPtr ptr . sizeOf $ (undefined :: V2 CFloat))
-  poke ptr poked = poke (plusPtr ptr $ 0) (position (poked :: MyVert))
+  poke ptr poked = poke (plusPtr ptr 0) (position (poked :: MyVert))
                 *> poke (plusPtr ptr . sizeOf $ (undefined :: V2 CFloat)) (color (poked :: MyVert))
+
+data UniformBufferObject = UniformBufferObject { model :: M44 CFloat
+                                               , view :: M44 CFloat
+                                               , proj :: M44 CFloat
+                                               }
+
+instance Storable UniformBufferObject where
+  sizeOf _ = 3 * sizeOf (undefined :: M44 CFloat)
+  alignment _ = sizeOf (undefined :: M44 CFloat)
+  peek ptr = UniformBufferObject <$> peek (plusPtr ptr 0)
+                                 <*> peek (plusPtr ptr . sizeOf $ (undefined :: M44 CFloat))
+                                 <*> peek (plusPtr ptr . (*2) . sizeOf $ (undefined :: M44 CFloat))
+  poke ptr poked = poke (plusPtr ptr 0) (model (poked :: UniformBufferObject))
+                *> poke (plusPtr ptr . sizeOf $ (undefined :: M44 CFloat)) (view (poked :: UniformBufferObject))
+                *> poke (plusPtr ptr . (*2) . sizeOf $ (undefined :: M44 CFloat)) (proj (poked :: UniformBufferObject))
 
 triangle :: [MyVert]
 triangle = [ MyVert { position = V2 0.0 (-0.5)
@@ -137,14 +159,19 @@ quadVerts = [ MyVert { position = V2 (-0.5) (-0.5)
 quadIndices :: [Word16]
 quadIndices = [0,1,2,2,3,0]
 
+
+vertexBufferSize = (fromIntegral ((*) <$> length <*> sizeOf . head $ quadVerts))
+indexBufferSize = (fromIntegral ((*) <$> length <*> sizeOf . head $ quadIndices))
+uniformBufferSize = sizeOf (undefined :: UniformBufferObject)
+
 type Scope a = ContT a IO a
 
 scope :: MonadIO m => Scope a -> m a
 scope = liftIO . flip runContT return
 track = ContT
 
-withMyPipelines :: VkDevice -> VkExtent2D -> VkRenderPass -> ([VkPipeline] -> IO a) -> IO a
-withMyPipelines dev extent renderPass next = scope $ do
+withMyPipelines :: VkDevice -> VkExtent2D -> VkRenderPass -> [VkDescriptorSetLayout] -> ([VkPipeline] -> IO a) -> IO a
+withMyPipelines dev extent renderPass descriptorSetLayouts next = scope $ do
   vertShaderCode <- liftIO $ BS.readFile "shaders/triangle.vert.spv"
   fragShaderCode <- liftIO $ BS.readFile "shaders/triangle.frag.spv"
 
@@ -152,7 +179,7 @@ withMyPipelines dev extent renderPass next = scope $ do
   fragShader <- track $ withShaderModule dev fragShaderCode
 
   cache <- track $ withPipelineCache dev Nothing
-  layout <- track $ withPipelineLayout dev [] []
+  layout <- track $ withPipelineLayout dev descriptorSetLayouts []
 
   liftIO $ withGraphicsPipelines dev cache [ GraphicsPipelineCreateInfo { HP.flags = zeroBits
                                                                         , stages = [ PipelineShaderStageCreateInfo { stage = VK_SHADER_STAGE_VERTEX_BIT
@@ -237,6 +264,60 @@ withMyPipelines dev extent renderPass next = scope $ do
   -- let geo = fromIndexedVerts verts faces
   -- someFunc
 
+data Frame = Frame { commandBuffer :: VkCommandBuffer
+                   , image :: VkImage
+                   , imageView :: IV.VkImageView
+                   , framebuffer :: VkFramebuffer
+                   , uniformBuffer :: VkBuffer
+                   , uniformBufferMemory :: VkDeviceMemory
+                   }
+
+withFrames :: VkPhysicalDevice -> VkDevice -> VkSwapchainKHR -> VkFormat -> VkCommandPool -> VkRenderPass -> VkExtent2D -> ([Frame] -> IO a) -> IO a
+withFrames physDev dev swapchain format commandPool renderPass extent next = scope $ do
+  images <- getSwapchainImages dev swapchain
+  commandBuffers <- track $ withCommandBuffers dev commandPool VK_COMMAND_BUFFER_LEVEL_PRIMARY (length images)
+  frames <- traverse (uncurry mkFrame) $ zip images commandBuffers
+  liftIO $ next frames
+  where
+    mkFrame image commandBuffer = do
+      imageView <- track $ withImageView dev
+                                         IV.VK_IMAGE_VIEW_TYPE_2D format
+                                         (IV.VkComponentMapping IV.VK_COMPONENT_SWIZZLE_IDENTITY IV.VK_COMPONENT_SWIZZLE_IDENTITY IV.VK_COMPONENT_SWIZZLE_IDENTITY IV.VK_COMPONENT_SWIZZLE_IDENTITY)
+                                         IV.VkImageSubresourceRange { IV.vkAspectMask = VK_IMAGE_ASPECT_COLOR_BIT
+                                                                    , IV.vkBaseMipLevel = 0
+                                                                    , IV.vkLevelCount = 1
+                                                                    , IV.vkBaseArrayLayer = 0
+                                                                    , IV.vkLayerCount = 1
+                                                                    }
+                                         image
+      framebuffer <- track $ withFramebuffer dev renderPass (vkWidth (extent :: VkExtent2D)) (vkHeight (extent :: VkExtent2D)) 1 [imageView]
+      (uniformBuffer, uniformBufferMemory) <- track $ withBufferAndMemory physDev dev (fromIntegral uniformBufferSize) VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) . curry
+      return Frame { commandBuffer = commandBuffer
+                   , image = image
+                   , imageView = imageView
+                   , framebuffer = framebuffer
+                   , uniformBuffer = uniformBuffer
+                   , uniformBufferMemory = uniformBufferMemory
+                   }
+
+data FrameRenderContext = FrameRenderContext { imageAvailable :: VkSemaphore
+                                             , renderFinished :: VkSemaphore
+                                             , inFlight :: VkFence
+                                             }
+
+withFrameRenderContexts :: VkDevice -> Int -> ([FrameRenderContext] -> IO a) -> IO a
+withFrameRenderContexts dev count next = scope $
+  liftIO . next =<< replicateM count mkFrameRenderContext
+  where
+    mkFrameRenderContext = do
+      imageAvailable <- track $ withSemaphore dev
+      renderFinished <- track $ withSemaphore dev
+      inFlight <- track $ withFence dev VK_FENCE_CREATE_SIGNALED_BIT
+      return FrameRenderContext { imageAvailable = imageAvailable
+                                , renderFinished = renderFinished
+                                , inFlight = inFlight
+                                }
+
 withBufferAndMemory :: VkPhysicalDevice -> VkDevice -> VkDeviceSize -> VkBufferUsageFlags -> VkMemoryPropertyFlags -> (VkBuffer -> VkDeviceMemory -> IO a) -> IO a
 withBufferAndMemory physDev dev size usage properties next = scope $ do
   vertexBuffer <- track $ withBuffer dev zeroBits size usage VK_SHARING_MODE_EXCLUSIVE []
@@ -313,17 +394,9 @@ main = scope $ do
 
       graphicsQueue <- getDeviceQueue graphicsQueueFamilyIdx 0 dev
       presentQueue <- getDeviceQueue presentQueueFamilyIdx 0 dev
-      images <- getSwapchainImages dev swapchain
-      imageViews <- traverse (track . mkImageView dev (S.vkFormat surfaceFormat)) images
-
-      liftIO $ print imageViews
-
-      let vertexBufferSize = (fromIntegral ((*) <$> length <*> sizeOf . head $ quadVerts))
 
       (vertexStagingBuffer, vertexStagingBufferMemory) <- track $ withBufferAndMemory physDev dev vertexBufferSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) . curry
       (vertexBuffer, vertexBufferMemory) <- track $ withBufferAndMemory physDev dev vertexBufferSize (VK_BUFFER_USAGE_TRANSFER_DST_BIT .|. VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT . curry
-
-      let indexBufferSize = (fromIntegral ((*) <$> length <*> sizeOf . head $ quadIndices))
 
       (indexStagingBuffer, indexStagingBufferMemory) <- track $ withBufferAndMemory physDev dev indexBufferSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) . curry
       (indexBuffer, indexBufferMemory) <- track $ withBufferAndMemory physDev dev indexBufferSize (VK_BUFFER_USAGE_TRANSFER_DST_BIT .|. VK_BUFFER_USAGE_INDEX_BUFFER_BIT) VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT . curry
@@ -335,6 +408,14 @@ main = scope $ do
       scope $ do
         memoryPtr <- track $ mappingMemory dev indexStagingBufferMemory 0 indexBufferSize
         liftIO $ pokeArray memoryPtr quadIndices
+
+      descriptorSetLayout <- track $ withDescriptorSetLayout dev zeroBits [ DescriptorSetLayoutBinding { binding = 0
+                                                                                                       , descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+                                                                                                       , descriptorCount = 1
+                                                                                                       , stageFlags = zeroBits
+                                                                                                       , immutableSamplers = []
+                                                                                                       }
+                                                                          ]
 
       renderPass <- track $ withRenderPass dev [ VkAttachmentDescription { vkFlags = zeroBits
                                                                          , vkFormat = S.vkFormat surfaceFormat
@@ -369,8 +450,7 @@ main = scope $ do
                                                                      }
                                                ]
 
-      [pipeline] <- track $ withMyPipelines dev extent renderPass
-      frameBuffers <- traverse (track . withFramebuffer dev renderPass (vkWidth (extent :: VkExtent2D)) (vkHeight (extent :: VkExtent2D)) 1 . (:[])) imageViews
+      [pipeline] <- track $ withMyPipelines dev extent renderPass [descriptorSetLayout]
 
       commandPool <- track $ withCommandPool dev zeroBits 0
 
@@ -394,17 +474,17 @@ main = scope $ do
           ]
 
         queueSubmit [ SubmitInfo { waitSemaphores = []
-                                , commandBuffers = [ copyBuffer ]
-                                , signalSemaphores = []
-                                }
+                                 , commandBuffers = [ copyBuffer ]
+                                 , signalSemaphores = []
+                                 }
                     ] VK_NULL_HANDLE graphicsQueue
         queueWaitIdle graphicsQueue
 
-      commandBuffers <- track $ withCommandBuffers dev commandPool VK_COMMAND_BUFFER_LEVEL_PRIMARY (length imageViews)
+      frames <- track $ withFrames physDev dev swapchain (S.vkFormat surfaceFormat) commandPool renderPass extent
 
-      flip traverse (zip commandBuffers frameBuffers) $ \(buf, frameBuffer) ->
-        recordCommandBuffer VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT buf
-          [ BeginRenderPass renderPass frameBuffer (VkRect2D (VkOffset2D 0 0) extent) [ VkColor . VkFloat32 $ SV.fromTuple (CFloat 0.0, CFloat 0.0, CFloat 0.0, CFloat 0.0) ] VK_SUBPASS_CONTENTS_INLINE
+      forM_ frames $ \Frame{..} ->
+        recordCommandBuffer VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT commandBuffer
+          [ BeginRenderPass renderPass framebuffer (VkRect2D (VkOffset2D 0 0) extent) [ VkColor . VkFloat32 $ SV.fromTuple (CFloat 0.0, CFloat 0.0, CFloat 0.0, CFloat 0.0) ] VK_SUBPASS_CONTENTS_INLINE
           , BindPipeline VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
           , BindVertexBuffers 0 [ VertexBufferBinding { buffer = vertexBuffer, offset = 0 } ]
           , BindIndexBuffer indexBuffer 0 VK_INDEX_TYPE_UINT16
@@ -412,35 +492,26 @@ main = scope $ do
           , EndRenderPass
           ]
 
-      imageAvailable <- track $ withSemaphore dev
-      renderFinished <- track $ withSemaphore dev
+      frameRenderContexts <- track $ withFrameRenderContexts dev 2
 
-      imgIdx <- acquireNextImage dev swapchain (maxBound :: Word64) imageAvailable VK_NULL_HANDLE
-
-      queueSubmit [ SubmitInfo { waitSemaphores = [ (imageAvailable, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) ]
-                               , commandBuffers = [ commandBuffers !! fromIntegral imgIdx ]
-                               , signalSemaphores = [ renderFinished ]
-                               }
-                  ] VK_NULL_HANDLE graphicsQueue
-      queuePresent [ renderFinished ] [ (swapchain, imgIdx) ] graphicsQueue
-
-      whileM_ (not <$> liftIO (windowShouldClose wnd)) $
+      whileM_ (not <$> liftIO (windowShouldClose wnd)) $ do
         liftIO $ pollEvents
+
+        forM_ frameRenderContexts $ \FrameRenderContext{..} -> do
+          waitForFences dev [inFlight] VK_TRUE (maxBound :: Word64)
+          resetFences dev [inFlight]
+
+          imgIdx <- acquireNextImage dev swapchain (maxBound :: Word64) imageAvailable VK_NULL_HANDLE
+
+          queueSubmit [ SubmitInfo { waitSemaphores = [ (imageAvailable, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) ]
+                                   , commandBuffers = [ commandBuffer (frames !! fromIntegral imgIdx) ]
+                                   , signalSemaphores = [ renderFinished ]
+                                   }
+                      ] inFlight graphicsQueue
+          queuePresent [ renderFinished ] [ (swapchain, imgIdx) ] graphicsQueue
 
       deviceWaitIdle dev
 
     liftIO $ destroyWindow wnd
 
   liftIO $ terminate
-  where
-    mkImageView dev format = withImageView
-      dev
-      IV.VK_IMAGE_VIEW_TYPE_2D
-      format
-      (IV.VkComponentMapping IV.VK_COMPONENT_SWIZZLE_IDENTITY IV.VK_COMPONENT_SWIZZLE_IDENTITY IV.VK_COMPONENT_SWIZZLE_IDENTITY IV.VK_COMPONENT_SWIZZLE_IDENTITY)
-      IV.VkImageSubresourceRange { IV.vkAspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-                                 , IV.vkBaseMipLevel = 0
-                                 , IV.vkLevelCount = 1
-                                 , IV.vkBaseArrayLayer = 0
-                                 , IV.vkLayerCount = 1
-                                 }

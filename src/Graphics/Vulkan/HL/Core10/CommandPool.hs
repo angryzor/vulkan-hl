@@ -26,15 +26,15 @@ import Util
 createCommandPool :: MonadIO m => VkDevice -> VkCommandPoolCreateFlags -> Word32 -> m VkCommandPool
 createCommandPool dev flags queueFamilyIndex = liftIO $
   with VkCommandPoolCreateInfo { vkSType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO
-                             , vkPNext = nullPtr
-                             , vkFlags = flags
-                             , vkQueueFamilyIndex = queueFamilyIndex
-                             } $ \createInfoPtr ->
+                               , vkPNext = nullPtr
+                               , vkFlags = flags
+                               , vkQueueFamilyIndex = queueFamilyIndex
+                               } $ \createInfoPtr ->
   vulkanPtrR $ vkCreateCommandPool dev createInfoPtr nullPtr
 
 destroyCommandPool :: MonadIO m => VkDevice -> VkCommandPool -> m ()
-destroyCommandPool dev imageView =
-  liftIO $ vkDestroyCommandPool dev imageView nullPtr
+destroyCommandPool dev commandPool =
+  liftIO $ vkDestroyCommandPool dev commandPool nullPtr
 
 withCommandPool :: MonadBaseControl IO m => VkDevice -> VkCommandPoolCreateFlags -> Word32 -> (VkCommandPool -> m a) -> m a
 withCommandPool dev flags queueFamilyIndex =
