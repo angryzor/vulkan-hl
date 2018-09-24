@@ -23,6 +23,7 @@ import Foreign.Marshal.Array
 import Graphics.Vulkan.Core10.CommandBuffer
 import Graphics.Vulkan.Core10.CommandBufferBuilding
 import Graphics.Vulkan.Core10.Core
+import Graphics.Vulkan.Core10.DescriptorSet
 import Graphics.Vulkan.Core10.DeviceInitialization
 import Graphics.Vulkan.Core10.MemoryManagement
 import Graphics.Vulkan.Core10.Pass
@@ -44,6 +45,12 @@ data Command
                     , contents :: VkSubpassContents
                     }
   | EndRenderPass
+  | BindDescriptorSets { pipelineBindPoint :: VkPipelineBindPoint
+                       , layout :: VkPipelineLayout
+                       , firstSet :: Word32
+                       , descriptorSets :: [VkDescriptorSet]
+                       , dynamicOffsets :: [Word32]
+                       }
   | BindPipeline { pipelineBindPoint :: VkPipelineBindPoint
                  , pipeline :: VkPipeline
                  }
@@ -87,6 +94,11 @@ record command buf = liftIO $
 
     EndRenderPass ->
       vkCmdEndRenderPass buf
+
+    BindDescriptorSets{..} ->
+      withArrayLen descriptorSets $ \descriptorSetsLen descriptorSetsPtr ->
+      withArrayLen dynamicOffsets $ \dynamicOffsetsLen dynamicOffsetsPtr ->
+      vkCmdBindDescriptorSets buf pipelineBindPoint layout firstSet (fromIntegral descriptorSetsLen) descriptorSetsPtr (fromIntegral dynamicOffsetsLen) dynamicOffsetsPtr
 
     BindPipeline{..} ->
       vkCmdBindPipeline buf pipelineBindPoint pipeline

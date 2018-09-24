@@ -48,6 +48,8 @@ executables:
     - vulkan-hl
     - ansi-terminal
     - monad-loops
+    - time
+    - lens
 
 tests:
   vulkan-hl-test:

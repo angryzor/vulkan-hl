@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 07b0961f2ce16237539988af38500a1f9c06db3832ae438e90df2cb329797b80
+-- hash: 6e21a1b1011c4fcf0f928e5e99d19a2007cf422dd132345fa9759e2555e5e0c0
 
 name:           vulkan-hl
 version:        0.1.0.0
@@ -78,11 +78,13 @@ executable vulkan-hl-exe
     , ansi-terminal
     , base >=4.7 && <5
     , bytestring
+    , lens
     , linear
     , monad-control
     , monad-loops
     , mtl
     , text
+    , time
     , uuid
     , vector
     , vector-sized

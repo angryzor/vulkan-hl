@@ -4,6 +4,12 @@
 
 module Graphics.Vulkan.HL.Core10.DescriptorSet
   ( DescriptorSetLayoutBinding (..)
+  , ImageDescriptorType (..)
+  , BufferDescriptorType (..)
+  , TexelBufferDescriptorType (..)
+  , WriteDescriptorSet (..)
+  , DescriptorBatch (..)
+  , CopyDescriptorSet (..)
   , createDescriptorSetLayout
   , destroyDescriptorSetLayout
   , withDescriptorSetLayout
@@ -14,6 +20,7 @@ module Graphics.Vulkan.HL.Core10.DescriptorSet
   , allocateDescriptorSets
   , freeDescriptorSets
   , withDescriptorSets
+  , updateDescriptorSets
   ) where
 
 import Control.Exception
@@ -25,6 +32,7 @@ import Foreign.C.Types
 import Foreign.Ptr
 import Foreign.Marshal
 import Foreign.Marshal.Array
+import Graphics.Vulkan.Core10.BufferView
 import Graphics.Vulkan.Core10.Core
 import Graphics.Vulkan.Core10.DeviceInitialization
 import Graphics.Vulkan.Core10.DescriptorSet
@@ -39,6 +47,63 @@ data DescriptorSetLayoutBinding = DescriptorSetLayoutBinding { binding :: Word32
                                                              , stageFlags :: VkShaderStageFlags
                                                              , immutableSamplers :: [VkSampler]
                                                              }
+
+class DescriptorType a where
+  toNative :: a -> VkDescriptorType
+
+data ImageDescriptorType = Sampler
+                         | CombinedImageSampler
+                         | SampledImage
+                         | StorageImage
+
+instance DescriptorType ImageDescriptorType where
+  toNative Sampler = VK_DESCRIPTOR_TYPE_SAMPLER
+  toNative CombinedImageSampler = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+  toNative SampledImage = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
+  toNative StorageImage = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+
+data BufferDescriptorType = UniformBuffer
+                          | StorageBuffer
+                          | UniformBufferDynamic
+                          | StorageBufferDynamic
+
+instance DescriptorType BufferDescriptorType where
+  toNative UniformBuffer = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+  toNative StorageBuffer = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
+  toNative UniformBufferDynamic = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC
+  toNative StorageBufferDynamic = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC
+
+data TexelBufferDescriptorType = UniformTexelBuffer
+                               | StorageTexelBuffer
+
+instance DescriptorType TexelBufferDescriptorType where
+  toNative UniformTexelBuffer = VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER
+  toNative StorageTexelBuffer = VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER
+
+data DescriptorBatch = ImageDescriptorBatch { imageDescriptorType :: ImageDescriptorType
+                                            , imageDescriptors :: [VkDescriptorImageInfo]
+                                            }
+                     | BufferDescriptorBatch { bufferDescriptorType :: BufferDescriptorType
+                                             , bufferDescriptors :: [VkDescriptorBufferInfo]
+                                             }
+                     | TexelBufferDescriptorBatch { texelBufferDescriptorType :: TexelBufferDescriptorType
+                                                  , texelBufferDescriptors :: [VkBufferView]
+                                                  }
+
+data WriteDescriptorSet = WriteDescriptorSet { dstSet :: VkDescriptorSet
+                                             , dstBinding :: Word32
+                                             , dstArrayElement :: Word32
+                                             , batch :: DescriptorBatch
+                                             }
+
+data CopyDescriptorSet = CopyDescriptorSet { srcSet :: VkDescriptorSet
+                                           , srcBinding :: Word32
+                                           , srcArrayElement :: Word32
+                                           , dstSet :: VkDescriptorSet
+                                           , dstBinding :: Word32
+                                           , dstArrayElement :: Word32
+                                           , descriptorCount :: Word32
+                                           }
 
 convertDescriptorSetLayoutBinding :: DescriptorSetLayoutBinding -> IO VkDescriptorSetLayoutBinding
 convertDescriptorSetLayoutBinding DescriptorSetLayoutBinding{..} =
@@ -114,4 +179,66 @@ withDescriptorSets :: MonadBaseControl IO m => VkDevice -> VkDescriptorPool -> [
 withDescriptorSets dev descriptorPool setLayouts =
   liftBaseOp $ bracket (allocateDescriptorSets dev descriptorPool setLayouts) (freeDescriptorSets dev descriptorPool)
 
--- FIXME: Todo: updateDescriptorSets
+convertDescriptorWrite :: WriteDescriptorSet -> IO VkWriteDescriptorSet
+convertDescriptorWrite WriteDescriptorSet{..} =
+  case batch of
+    ImageDescriptorBatch{..} ->
+      withArrayLen imageDescriptors $ \descriptorsLen descriptorsPtr ->
+      return $ VkWriteDescriptorSet { vkSType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET
+                                    , vkPNext = nullPtr
+                                    , vkDstSet = dstSet
+                                    , vkDstBinding = dstBinding
+                                    , vkDstArrayElement = dstArrayElement
+                                    , vkDescriptorCount = fromIntegral descriptorsLen
+                                    , vkDescriptorType = toNative imageDescriptorType
+                                    , vkPImageInfo = descriptorsPtr
+                                    , vkPBufferInfo = nullPtr
+                                    , vkPTexelBufferView = nullPtr
+                                    }
+    BufferDescriptorBatch{..} ->
+      withArrayLen bufferDescriptors $ \descriptorsLen descriptorsPtr ->
+      return $ VkWriteDescriptorSet { vkSType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET
+                                    , vkPNext = nullPtr
+                                    , vkDstSet = dstSet
+                                    , vkDstBinding = dstBinding
+                                    , vkDstArrayElement = dstArrayElement
+                                    , vkDescriptorCount = fromIntegral descriptorsLen
+                                    , vkDescriptorType = toNative bufferDescriptorType
+                                    , vkPImageInfo = nullPtr
+                                    , vkPBufferInfo = descriptorsPtr
+                                    , vkPTexelBufferView = nullPtr
+                                    }
+    TexelBufferDescriptorBatch{..} ->
+      withArrayLen texelBufferDescriptors $ \descriptorsLen descriptorsPtr ->
+      return $ VkWriteDescriptorSet { vkSType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET
+                                    , vkPNext = nullPtr
+                                    , vkDstSet = dstSet
+                                    , vkDstBinding = dstBinding
+                                    , vkDstArrayElement = dstArrayElement
+                                    , vkDescriptorCount = fromIntegral descriptorsLen
+                                    , vkDescriptorType = toNative texelBufferDescriptorType
+                                    , vkPImageInfo = nullPtr
+                                    , vkPBufferInfo = nullPtr
+                                    , vkPTexelBufferView = descriptorsPtr
+                                    }
+
+convertDescriptorCopy :: CopyDescriptorSet -> VkCopyDescriptorSet
+convertDescriptorCopy CopyDescriptorSet{..} =
+  VkCopyDescriptorSet { vkSType = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET
+                      , vkPNext = nullPtr
+                      , vkSrcSet = srcSet
+                      , vkSrcBinding = srcBinding
+                      , vkSrcArrayElement = srcArrayElement
+                      , vkDstSet = dstSet
+                      , vkDstBinding = dstBinding
+                      , vkDstArrayElement = dstArrayElement
+                      , vkDescriptorCount = descriptorCount
+                      }
+
+updateDescriptorSets :: MonadIO m => VkDevice -> [WriteDescriptorSet] -> [CopyDescriptorSet] -> m ()
+updateDescriptorSets dev descriptorWrites descriptorCopies = liftIO $ do
+  convertedDescriptorWrites <- traverse convertDescriptorWrite descriptorWrites
+  let convertedDescriptorCopies = convertDescriptorCopy <$> descriptorCopies
+  withArrayLen convertedDescriptorWrites $ \descriptorWritesLen descriptorWritesPtr ->
+    withArrayLen convertedDescriptorCopies $ \descriptorCopiesLen descriptorCopiesPtr ->
+    vkUpdateDescriptorSets dev (fromIntegral descriptorWritesLen) descriptorWritesPtr (fromIntegral descriptorCopiesLen) descriptorCopiesPtr

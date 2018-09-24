@@ -9,12 +9,14 @@
 
 module Main where
 
+import Control.Lens ((&), (%~))
 import Control.Monad
 import Control.Monad.Cont
 import Control.Monad.Loops
 import Data.Bits
 import qualified Data.ByteString as BS
 import Data.List
+import Data.Time.Clock
 import Data.Word
 import qualified Data.Vector.Storable.Sized as SV
 import Graphics.UI.GLFW as GLFW
@@ -70,6 +72,8 @@ import Linear.Matrix
 import Linear.V2
 import Linear.V3
 import Linear.V4
+import Linear.Quaternion
+import Linear.Projection
 import System.Console.ANSI
 import Util
 
@@ -117,7 +121,7 @@ instance Storable MyVert where
 data UniformBufferObject = UniformBufferObject { model :: M44 CFloat
                                                , view :: M44 CFloat
                                                , proj :: M44 CFloat
-                                               }
+                                               } deriving (Show)
 
 instance Storable UniformBufferObject where
   sizeOf _ = 3 * sizeOf (undefined :: M44 CFloat)
@@ -170,8 +174,8 @@ scope :: MonadIO m => Scope a -> m a
 scope = liftIO . flip runContT return
 track = ContT
 
-withMyPipelines :: VkDevice -> VkExtent2D -> VkRenderPass -> [VkDescriptorSetLayout] -> ([VkPipeline] -> IO a) -> IO a
-withMyPipelines dev extent renderPass descriptorSetLayouts next = scope $ do
+withMyPipelines :: VkDevice -> VkExtent2D -> VkRenderPass -> VkPipelineLayout -> ([VkPipeline] -> IO a) -> IO a
+withMyPipelines dev extent renderPass pipelineLayout next = scope $ do
   vertShaderCode <- liftIO $ BS.readFile "shaders/triangle.vert.spv"
   fragShaderCode <- liftIO $ BS.readFile "shaders/triangle.frag.spv"
 
@@ -179,7 +183,6 @@ withMyPipelines dev extent renderPass descriptorSetLayouts next = scope $ do
   fragShader <- track $ withShaderModule dev fragShaderCode
 
   cache <- track $ withPipelineCache dev Nothing
-  layout <- track $ withPipelineLayout dev descriptorSetLayouts []
 
   liftIO $ withGraphicsPipelines dev cache [ GraphicsPipelineCreateInfo { HP.flags = zeroBits
                                                                         , stages = [ PipelineShaderStageCreateInfo { stage = VK_SHADER_STAGE_VERTEX_BIT
@@ -219,7 +222,7 @@ withMyPipelines dev extent renderPass descriptorSetLayouts next = scope $ do
                                                                                                                                     , polygonMode = VK_POLYGON_MODE_FILL
                                                                                                                                     , lineWidth = 1.0
                                                                                                                                     , cullMode = VK_CULL_MODE_BACK_BIT
-                                                                                                                                    , frontFace = VK_FRONT_FACE_CLOCKWISE
+                                                                                                                                    , frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE
                                                                                                                                     , depthBiasEnable = VK_FALSE
                                                                                                                                     , depthBiasConstantFactor = 0.0
                                                                                                                                     , depthBiasClamp = 0.0
@@ -249,7 +252,7 @@ withMyPipelines dev extent renderPass descriptorSetLayouts next = scope $ do
                                                                         , depthStencilState = Nothing
                                                                         , tessellationState = Nothing
                                                                         , dynamicState = Nothing
-                                                                        , layout = layout
+                                                                        , layout = pipelineLayout
                                                                         , renderPass = renderPass
                                                                         , subpass = 0
                                                                         , basePipelineHandle = VK_NULL_HANDLE
@@ -270,16 +273,22 @@ data Frame = Frame { commandBuffer :: VkCommandBuffer
                    , framebuffer :: VkFramebuffer
                    , uniformBuffer :: VkBuffer
                    , uniformBufferMemory :: VkDeviceMemory
+                   , descriptorSet :: VkDescriptorSet
                    }
 
-withFrames :: VkPhysicalDevice -> VkDevice -> VkSwapchainKHR -> VkFormat -> VkCommandPool -> VkRenderPass -> VkExtent2D -> ([Frame] -> IO a) -> IO a
-withFrames physDev dev swapchain format commandPool renderPass extent next = scope $ do
+withFrames :: VkPhysicalDevice -> VkDevice -> VkSwapchainKHR -> VkFormat -> VkCommandPool -> VkDescriptorSetLayout -> VkRenderPass -> VkExtent2D -> ([Frame] -> IO a) -> IO a
+withFrames physDev dev swapchain format commandPool descriptorSetLayout renderPass extent next = scope $ do
   images <- getSwapchainImages dev swapchain
+  descriptorPool <- track $ withDescriptorPool dev zeroBits (fromIntegral $ length images) [ VkDescriptorPoolSize { vkType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+                                                                                                                  , vkDescriptorCount = fromIntegral $ length images
+                                                                                                                  }
+                                                                                           ]
   commandBuffers <- track $ withCommandBuffers dev commandPool VK_COMMAND_BUFFER_LEVEL_PRIMARY (length images)
-  frames <- traverse (uncurry mkFrame) $ zip images commandBuffers
+  descriptorSets <- allocateDescriptorSets dev descriptorPool $ replicate (length images) descriptorSetLayout
+  frames <- sequenceA $ zipWith3 mkFrame images commandBuffers descriptorSets
   liftIO $ next frames
   where
-    mkFrame image commandBuffer = do
+    mkFrame image commandBuffer descriptorSet = do
       imageView <- track $ withImageView dev
                                          IV.VK_IMAGE_VIEW_TYPE_2D format
                                          (IV.VkComponentMapping IV.VK_COMPONENT_SWIZZLE_IDENTITY IV.VK_COMPONENT_SWIZZLE_IDENTITY IV.VK_COMPONENT_SWIZZLE_IDENTITY IV.VK_COMPONENT_SWIZZLE_IDENTITY)
@@ -292,12 +301,25 @@ withFrames physDev dev swapchain format commandPool renderPass extent next = sco
                                          image
       framebuffer <- track $ withFramebuffer dev renderPass (vkWidth (extent :: VkExtent2D)) (vkHeight (extent :: VkExtent2D)) 1 [imageView]
       (uniformBuffer, uniformBufferMemory) <- track $ withBufferAndMemory physDev dev (fromIntegral uniformBufferSize) VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) . curry
+      updateDescriptorSets dev [ WriteDescriptorSet { dstSet = descriptorSet
+                                                    , dstBinding = 0
+                                                    , dstArrayElement = 0
+                                                    , batch = BufferDescriptorBatch { bufferDescriptorType = UniformBuffer
+                                                                                    , bufferDescriptors = [ VkDescriptorBufferInfo { vkBuffer = uniformBuffer
+                                                                                                                                   , vkOffset = 0
+                                                                                                                                   , vkRange = fromIntegral uniformBufferSize
+                                                                                                                                   }
+                                                                                                          ]
+                                                                                    }
+                                                    }
+                               ] []
       return Frame { commandBuffer = commandBuffer
                    , image = image
                    , imageView = imageView
                    , framebuffer = framebuffer
                    , uniformBuffer = uniformBuffer
                    , uniformBufferMemory = uniformBufferMemory
+                   , descriptorSet = descriptorSet
                    }
 
 data FrameRenderContext = FrameRenderContext { imageAvailable :: VkSemaphore
@@ -412,7 +434,7 @@ main = scope $ do
       descriptorSetLayout <- track $ withDescriptorSetLayout dev zeroBits [ DescriptorSetLayoutBinding { binding = 0
                                                                                                        , descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
                                                                                                        , descriptorCount = 1
-                                                                                                       , stageFlags = zeroBits
+                                                                                                       , stageFlags = VK_SHADER_STAGE_VERTEX_BIT
                                                                                                        , immutableSamplers = []
                                                                                                        }
                                                                           ]
@@ -450,7 +472,8 @@ main = scope $ do
                                                                      }
                                                ]
 
-      [pipeline] <- track $ withMyPipelines dev extent renderPass [descriptorSetLayout]
+      pipelineLayout <- track $ withPipelineLayout dev [descriptorSetLayout] []
+      [pipeline] <- track $ withMyPipelines dev extent renderPass pipelineLayout
 
       commandPool <- track $ withCommandPool dev zeroBits 0
 
@@ -480,7 +503,7 @@ main = scope $ do
                     ] VK_NULL_HANDLE graphicsQueue
         queueWaitIdle graphicsQueue
 
-      frames <- track $ withFrames physDev dev swapchain (S.vkFormat surfaceFormat) commandPool renderPass extent
+      frames <- track $ withFrames physDev dev swapchain (S.vkFormat surfaceFormat) commandPool descriptorSetLayout renderPass extent
 
       forM_ frames $ \Frame{..} ->
         recordCommandBuffer VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT commandBuffer
@@ -488,11 +511,14 @@ main = scope $ do
           , BindPipeline VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
           , BindVertexBuffers 0 [ VertexBufferBinding { buffer = vertexBuffer, offset = 0 } ]
           , BindIndexBuffer indexBuffer 0 VK_INDEX_TYPE_UINT16
+          , BindDescriptorSets VK_PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 [descriptorSet] []
           , DrawIndexed (fromIntegral . length $ quadIndices) 1 0 0 0
           , EndRenderPass
           ]
 
       frameRenderContexts <- track $ withFrameRenderContexts dev 2
+
+      startTime <- liftIO getCurrentTime
 
       whileM_ (not <$> liftIO (windowShouldClose wnd)) $ do
         liftIO $ pollEvents
@@ -502,9 +528,20 @@ main = scope $ do
           resetFences dev [inFlight]
 
           imgIdx <- acquireNextImage dev swapchain (maxBound :: Word64) imageAvailable VK_NULL_HANDLE
+          let Frame{..} = frames !! fromIntegral imgIdx
+
+          currentTime <- liftIO getCurrentTime
+          let elapsed = diffUTCTime currentTime startTime
+
+          scope $ do
+            memoryPtr <- track $ mappingMemory dev uniformBufferMemory 0 (fromIntegral uniformBufferSize)
+            liftIO $ poke memoryPtr UniformBufferObject { model = Linear.Matrix.transpose $ flip mkTransformation (V3 0.0 0.0 0.0) . axisAngle (V3 0.0 0.0 1.0) $ realToFrac elapsed * pi
+                                                        , view = Linear.Matrix.transpose $ lookAt (V3 2.0 2.0 2.0) (V3 0.0 0.0 0.0) (V3 0.0 0.0 1.0)
+                                                        , proj = (Linear.Matrix.transpose $ perspective (pi / 4.0) (fromIntegral (vkWidth (extent :: VkExtent2D)) / fromIntegral (vkHeight (extent :: VkExtent2D))) 0.1 10.0) & _y._y %~ (*(-1))
+                                                        }
 
           queueSubmit [ SubmitInfo { waitSemaphores = [ (imageAvailable, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) ]
-                                   , commandBuffers = [ commandBuffer (frames !! fromIntegral imgIdx) ]
+                                   , commandBuffers = [ commandBuffer ]
                                    , signalSemaphores = [ renderFinished ]
                                    }
                       ] inFlight graphicsQueue
