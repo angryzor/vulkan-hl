@@ -9,16 +9,19 @@
 
 module Main where
 
+import Codec.Picture hiding (withImage)
 import Control.Lens ((&), (%~))
 import Control.Monad
 import Control.Monad.Cont
 import Control.Monad.Loops
 import Data.Bits
 import qualified Data.ByteString as BS
+import Data.Default.Class
 import Data.List
 import Data.Time.Clock
+import qualified Data.Vector.Storable as SV
+import qualified Data.Vector.Storable.Sized as SSV
 import Data.Word
-import qualified Data.Vector.Storable.Sized as SV
 import Graphics.UI.GLFW as GLFW
 import Graphics.Vulkan.Core10.Buffer
 import Graphics.Vulkan.Core10.CommandBuffer
@@ -37,6 +40,7 @@ import Graphics.Vulkan.Core10.Pipeline
 import Graphics.Vulkan.Core10.PipelineCache
 import Graphics.Vulkan.Core10.PipelineLayout
 import Graphics.Vulkan.Core10.Queue
+import Graphics.Vulkan.Core10.Sampler
 import Graphics.Vulkan.Core10.SparseResourceMemoryManagement
 import qualified Graphics.Vulkan.Core10.ImageView as IV
 import Graphics.Vulkan.Extensions.VK_EXT_debug_utils
@@ -50,6 +54,7 @@ import Graphics.Vulkan.HL.Core10.DescriptorSet
 import Graphics.Vulkan.HL.Core10.Device
 import Graphics.Vulkan.HL.Core10.DeviceInitialization
 import Graphics.Vulkan.HL.Core10.Fence
+import Graphics.Vulkan.HL.Core10.Image
 import Graphics.Vulkan.HL.Core10.ImageView
 import Graphics.Vulkan.HL.Core10.Memory
 import Graphics.Vulkan.HL.Core10.MemoryManagement
@@ -59,8 +64,9 @@ import Graphics.Vulkan.HL.Core10.PipelineCache
 import Graphics.Vulkan.HL.Core10.PipelineLayout
 import Graphics.Vulkan.HL.Core10.Queue
 import Graphics.Vulkan.HL.Core10.QueueSemaphore
+import Graphics.Vulkan.HL.Core10.Sampler
 import Graphics.Vulkan.HL.Core10.Shader
-import Graphics.Vulkan.HL.Extensions.VK_EXT_debug_utils
+import Graphics.Vulkan.HL.Extensions.VK_EXT_debug_utils (withDebugUtilsMessenger, DebugUtilsMessengerCallback, DebugUtilsMessengerCallbackData (..))
 import Graphics.Vulkan.HL.Extensions.VK_KHR_surface
 import Graphics.Vulkan.HL.Extensions.VK_KHR_swapchain as HSW
 import Foreign.C.String
@@ -106,17 +112,20 @@ debugMessage mType mSeverity cbData = do
 --   print =<< getPhysicalDeviceQueueFamilyProperties dev
 --   print =<< getPhysicalDeviceMemoryProperties dev
 
-data MyVert = MyVert { position :: V2 CFloat
+data MyVert = MyVert { position :: V3 CFloat
                      , color :: V3 CFloat
+                     , texCoord :: V2 CFloat
                      }
 
 instance Storable MyVert where
-  sizeOf _ = sizeOf (undefined :: V2 CFloat) + sizeOf (undefined :: V3 CFloat)
+  sizeOf _ = sizeOf (undefined :: V3 CFloat) + sizeOf (undefined :: V3 CFloat) + sizeOf (undefined :: V2 CFloat)
   alignment _ = max (alignment (undefined :: V2 CFloat)) (alignment (undefined :: V3 CFloat))
   peek ptr = MyVert <$> peek (plusPtr ptr 0)
-                    <*> peek (plusPtr ptr . sizeOf $ (undefined :: V2 CFloat))
+                    <*> peek (plusPtr ptr (sizeOf (undefined :: V3 CFloat)))
+                    <*> peek (plusPtr ptr (2 * sizeOf (undefined :: V3 CFloat)))
   poke ptr poked = poke (plusPtr ptr 0) (position (poked :: MyVert))
-                *> poke (plusPtr ptr . sizeOf $ (undefined :: V2 CFloat)) (color (poked :: MyVert))
+                *> poke (plusPtr ptr (sizeOf (undefined :: V3 CFloat))) (color (poked :: MyVert))
+                *> poke (plusPtr ptr (2 * sizeOf (undefined :: V3 CFloat))) (texCoord (poked :: MyVert))
 
 data UniformBufferObject = UniformBufferObject { model :: M44 CFloat
                                                , view :: M44 CFloat
@@ -127,41 +136,64 @@ instance Storable UniformBufferObject where
   sizeOf _ = 3 * sizeOf (undefined :: M44 CFloat)
   alignment _ = sizeOf (undefined :: M44 CFloat)
   peek ptr = UniformBufferObject <$> peek (plusPtr ptr 0)
-                                 <*> peek (plusPtr ptr . sizeOf $ (undefined :: M44 CFloat))
-                                 <*> peek (plusPtr ptr . (*2) . sizeOf $ (undefined :: M44 CFloat))
+                                 <*> peek (plusPtr ptr (sizeOf (undefined :: M44 CFloat)))
+                                 <*> peek (plusPtr ptr (2 * sizeOf (undefined :: M44 CFloat)))
   poke ptr poked = poke (plusPtr ptr 0) (model (poked :: UniformBufferObject))
-                *> poke (plusPtr ptr . sizeOf $ (undefined :: M44 CFloat)) (view (poked :: UniformBufferObject))
-                *> poke (plusPtr ptr . (*2) . sizeOf $ (undefined :: M44 CFloat)) (proj (poked :: UniformBufferObject))
+                *> poke (plusPtr ptr (sizeOf (undefined :: M44 CFloat))) (view (poked :: UniformBufferObject))
+                *> poke (plusPtr ptr (2 * sizeOf (undefined :: M44 CFloat))) (proj (poked :: UniformBufferObject))
 
-triangle :: [MyVert]
-triangle = [ MyVert { position = V2 0.0 (-0.5)
-                    , color = V3 1.0 0.0 0.0
-                    }
-           , MyVert { position = V2 0.5 0.5
-                    , color = V3 0.0 1.0 0.0
-                    }
-           , MyVert { position = V2 (-0.5) 0.5
-                    , color = V3 0.0 0.0 1.0
-                    }
-           ]
+-- triangle :: [MyVert]
+-- triangle = [ MyVert { position = V2 0.0 (-0.5)
+--                     , color = V3 1.0 0.0 0.0
+--                     }
+--            , MyVert { position = V2 0.5 0.5
+--                     , color = V3 0.0 1.0 0.0
+--                     }
+--            , MyVert { position = V2 (-0.5) 0.5
+--                     , color = V3 0.0 0.0 1.0
+--                     }
+--            ]
 
 quadVerts :: [MyVert]
-quadVerts = [ MyVert { position = V2 (-0.5) (-0.5)
+quadVerts = [ MyVert { position = V3 (-0.5) (-0.5) 0.0
                      , color = V3 1.0 0.0 0.0
+                     , texCoord = V2 1.0 0.0
                      }
-            , MyVert { position = V2 0.5 (-0.5)
+            , MyVert { position = V3 0.5 (-0.5) 0.0
                      , color = V3 0.0 1.0 0.0
+                     , texCoord = V2 0.0 0.0
                      }
-            , MyVert { position = V2 0.5 0.5
+            , MyVert { position = V3 0.5 0.5 0.0
                      , color = V3 0.0 0.0 1.0
+                     , texCoord = V2 0.0 1.0
                      }
-            , MyVert { position = V2 (-0.5) 0.5
+            , MyVert { position = V3 (-0.5) 0.5 0.0
                      , color = V3 1.0 1.0 1.0
+                     , texCoord = V2 1.0 1.0
+                     }
+
+            , MyVert { position = V3 (-0.5) (-0.5) (-0.5)
+                     , color = V3 1.0 0.0 0.0
+                     , texCoord = V2 1.0 0.0
+                     }
+            , MyVert { position = V3 0.5 (-0.5) (-0.5)
+                     , color = V3 0.0 1.0 0.0
+                     , texCoord = V2 0.0 0.0
+                     }
+            , MyVert { position = V3 0.5 0.5 (-0.5)
+                     , color = V3 0.0 0.0 1.0
+                     , texCoord = V2 0.0 1.0
+                     }
+            , MyVert { position = V3 (-0.5) 0.5 (-0.5)
+                     , color = V3 1.0 1.0 1.0
+                     , texCoord = V2 1.0 1.0
                      }
             ]
 
 quadIndices :: [Word16]
-quadIndices = [0,1,2,2,3,0]
+quadIndices = [ 0,1,2,2,3,0
+              , 4,5,6,6,7,4
+              ]
 
 
 vertexBufferSize = (fromIntegral ((*) <$> length <*> sizeOf . head $ quadVerts))
@@ -201,13 +233,18 @@ withMyPipelines dev extent renderPass pipelineLayout next = scope $ do
                                                                                                                                                               ]
                                                                                                                                 , vertexAttributeDescriptions = [ VkVertexInputAttributeDescription { vkBinding = 0
                                                                                                                                                                                                     , vkLocation = 0
-                                                                                                                                                                                                    , vkFormat = VK_FORMAT_R32G32_SFLOAT
+                                                                                                                                                                                                    , vkFormat = VK_FORMAT_R32G32B32_SFLOAT
                                                                                                                                                                                                     , vkOffset = 0
                                                                                                                                                                                                     }
                                                                                                                                                                 , VkVertexInputAttributeDescription { vkBinding = 0
                                                                                                                                                                                                     , vkLocation = 1
                                                                                                                                                                                                     , vkFormat = VK_FORMAT_R32G32B32_SFLOAT
-                                                                                                                                                                                                    , vkOffset = fromIntegral . sizeOf . position . head $ quadVerts
+                                                                                                                                                                                                    , vkOffset = fromIntegral $ sizeOf . position $ head quadVerts
+                                                                                                                                                                                                    }
+                                                                                                                                                                , VkVertexInputAttributeDescription { vkBinding = 0
+                                                                                                                                                                                                    , vkLocation = 2
+                                                                                                                                                                                                    , vkFormat = VK_FORMAT_R32G32_SFLOAT
+                                                                                                                                                                                                    , vkOffset = fromIntegral $ (+) <$> sizeOf . position <*> sizeOf . color $ head quadVerts
                                                                                                                                                                                                     }
                                                                                                                                                                 ]
                                                                                                                                 }
@@ -276,10 +313,13 @@ data Frame = Frame { commandBuffer :: VkCommandBuffer
                    , descriptorSet :: VkDescriptorSet
                    }
 
-withFrames :: VkPhysicalDevice -> VkDevice -> VkSwapchainKHR -> VkFormat -> VkCommandPool -> VkDescriptorSetLayout -> VkRenderPass -> VkExtent2D -> ([Frame] -> IO a) -> IO a
-withFrames physDev dev swapchain format commandPool descriptorSetLayout renderPass extent next = scope $ do
+withFrames :: VkPhysicalDevice -> VkDevice -> VkSwapchainKHR -> VkFormat -> VkCommandPool -> VkDescriptorSetLayout -> VkRenderPass -> VkExtent2D -> IV.VkImageView -> VkSampler -> ([Frame] -> IO a) -> IO a
+withFrames physDev dev swapchain format commandPool descriptorSetLayout renderPass extent imageImageView imageSampler next = scope $ do
   images <- getSwapchainImages dev swapchain
   descriptorPool <- track $ withDescriptorPool dev zeroBits (fromIntegral $ length images) [ VkDescriptorPoolSize { vkType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+                                                                                                                  , vkDescriptorCount = fromIntegral $ length images
+                                                                                                                  }
+                                                                                           , VkDescriptorPoolSize { vkType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
                                                                                                                   , vkDescriptorCount = fromIntegral $ length images
                                                                                                                   }
                                                                                            ]
@@ -312,6 +352,17 @@ withFrames physDev dev swapchain format commandPool descriptorSetLayout renderPa
                                                                                                           ]
                                                                                     }
                                                     }
+                               , WriteDescriptorSet { dstSet = descriptorSet
+                                                    , dstBinding = 1
+                                                    , dstArrayElement = 0
+                                                    , batch = ImageDescriptorBatch { imageDescriptorType = CombinedImageSampler
+                                                                                   , imageDescriptors = [ VkDescriptorImageInfo { vkImageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                                                                                                                                , vkImageView = imageImageView
+                                                                                                                                , vkSampler = imageSampler
+                                                                                                                                }
+                                                                                                        ]
+                                                                                   }
+                                                    }
                                ] []
       return Frame { commandBuffer = commandBuffer
                    , image = image
@@ -340,19 +391,58 @@ withFrameRenderContexts dev count next = scope $
                                 , inFlight = inFlight
                                 }
 
+findMemory :: (MonadIO m, Num a) => VkPhysicalDevice -> VkMemoryRequirements -> VkMemoryPropertyFlags -> m (Maybe a)
+findMemory physDev memoryReq properties = do
+  deviceMemProps <- getPhysicalDeviceMemoryProperties physDev
+  return $ fmap fromIntegral . findIndex (\(memoryType,idx) -> testBit (vkMemoryTypeBits memoryReq) idx && memoryType .&. properties == properties) $ zip (vkPropertyFlags <$> memoryTypes deviceMemProps) [0..]
+
 withBufferAndMemory :: VkPhysicalDevice -> VkDevice -> VkDeviceSize -> VkBufferUsageFlags -> VkMemoryPropertyFlags -> (VkBuffer -> VkDeviceMemory -> IO a) -> IO a
 withBufferAndMemory physDev dev size usage properties next = scope $ do
-  vertexBuffer <- track $ withBuffer dev zeroBits size usage VK_SHARING_MODE_EXCLUSIVE []
-  memoryReq <- getBufferMemoryRequirements dev vertexBuffer
+  buffer <- track $ withBuffer dev zeroBits size usage VK_SHARING_MODE_EXCLUSIVE []
+  memoryReq <- getBufferMemoryRequirements dev buffer
 
-  deviceMemProps <- getPhysicalDeviceMemoryProperties physDev
+  Just memoryType <- findMemory physDev memoryReq properties
 
-  let Just memoryType = findIndex (\(memoryType,idx) -> testBit (vkMemoryTypeBits memoryReq) idx && memoryType .&. properties == properties) $ zip (vkPropertyFlags <$> memoryTypes deviceMemProps) [0..]
+  bufferMemory <- track $ withMemory dev memoryType (Graphics.Vulkan.Core10.MemoryManagement.vkSize memoryReq)
+  bindBufferMemory dev buffer bufferMemory 0
 
-  vertexBufferMemory <- track $ withMemory dev (fromIntegral memoryType) (Graphics.Vulkan.Core10.MemoryManagement.vkSize memoryReq)
-  bindBufferMemory dev vertexBuffer vertexBufferMemory 0
+  liftIO $ next buffer bufferMemory
 
-  liftIO $ next vertexBuffer vertexBufferMemory
+withImageAndNoMemory :: VkPhysicalDevice -> VkDevice -> Word32 -> Word32 -> VkFormat -> VkImageTiling -> VkImageUsageFlags -> VkMemoryPropertyFlags -> (VkImage -> IO a) -> IO a
+withImageAndNoMemory physDev dev width height format tiling usage properties next = scope $ do
+  image <- track $ withImage dev ImageCreateInfo { flags = zeroBits
+                                                 , imageType = VK_IMAGE_TYPE_2D
+                                                 , extent = VkExtent3D width height 1
+                                                 , mipLevels = 1
+                                                 , arrayLayers = 1
+                                                 , format = format
+                                                 , tiling = tiling
+                                                 , initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
+                                                 , usage = usage
+                                                 , sharingMode = VK_SHARING_MODE_EXCLUSIVE
+                                                 , samples = VK_SAMPLE_COUNT_1_BIT
+                                                 , queueFamilyIndices = []
+                                                 }
+  memoryReq <- getImageMemoryRequirements dev image
+
+  Just memoryType <- findMemory physDev memoryReq properties
+
+  imageMemory <- track $ withMemory dev memoryType (Graphics.Vulkan.Core10.MemoryManagement.vkSize memoryReq)
+  bindImageMemory dev image imageMemory 0
+
+  liftIO $ next image
+
+oneshot :: MonadIO m => VkDevice -> VkQueue -> VkCommandPool -> [Command] -> m ()
+oneshot dev queue commandPool commands = scope $ do
+  [copyBuffer] <- track $ withCommandBuffers dev commandPool VK_COMMAND_BUFFER_LEVEL_PRIMARY 1
+  recordCommandBuffer VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT copyBuffer commands
+
+  queueSubmit [ SubmitInfo { waitSemaphores = []
+                           , commandBuffers = [ copyBuffer ]
+                           , signalSemaphores = []
+                           }
+              ] VK_NULL_HANDLE queue
+  queueWaitIdle queue
 
 main :: IO ()
 main = scope $ do
@@ -388,7 +478,7 @@ main = scope $ do
     let surfaceFormat = last deviceSurfaceFormats
     let presentMode = head devicePresentModes
     let extent = vkCurrentExtent deviceSurfaceCapabilities
-    liftIO . print $ surfaceFormat
+    -- liftIO . print $ surfaceFormat
 
     availQueues <- getPhysicalDeviceQueueFamilyProperties physDev
     presentSupports <- traverse (getPhysicalDeviceSurfaceSupport surf physDev) [0..fromIntegral (length availQueues) - 1]
@@ -397,7 +487,7 @@ main = scope $ do
     let Just presentQueueFamilyIdx = fromIntegral <$> elemIndex VK_TRUE presentSupports
 
     scope $ do
-      dev <- track $ withDevice (map (flip DeviceQueueCreateInfo [1.0]) ([graphicsQueueFamilyIdx] `union` [presentQueueFamilyIdx])) ["VK_LAYER_LUNARG_standard_validation"] [VK_KHR_SWAPCHAIN_EXTENSION_NAME] Nothing physDev
+      dev <- track $ withDevice (map (flip DeviceQueueCreateInfo [1.0]) ([graphicsQueueFamilyIdx] `union` [presentQueueFamilyIdx])) ["VK_LAYER_LUNARG_standard_validation"] [VK_KHR_SWAPCHAIN_EXTENSION_NAME] (Just def { vkSamplerAnisotropy = VK_TRUE }) physDev
       swapchain <- track $ withSwapchain SwapchainCreateInfo { HSW.flags = zeroBits
                                                              , minImageCount = vkMaxImageCount deviceSurfaceCapabilities
                                                              , imageFormat = S.vkFormat surfaceFormat
@@ -431,11 +521,28 @@ main = scope $ do
         memoryPtr <- track $ mappingMemory dev indexStagingBufferMemory 0 indexBufferSize
         liftIO $ pokeArray memoryPtr quadIndices
 
+      Right sampleImageData <- liftIO $ fmap convertRGBA8 <$> readImage "test-image.png"
+      let imageBufferSize = fromIntegral $ (SV.length . imageData $ sampleImageData) * (sizeOf . SV.head . imageData $ sampleImageData)
+
+      (imageStagingBuffer, imageStagingBufferMemory) <- track $ withBufferAndMemory physDev dev imageBufferSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) . curry
+
+      imageImage <- track $ withImageAndNoMemory physDev dev (fromIntegral $ imageWidth sampleImageData) (fromIntegral $ imageHeight sampleImageData) VK_FORMAT_R8G8B8A8_UNORM VK_IMAGE_TILING_OPTIMAL (VK_IMAGE_USAGE_TRANSFER_DST_BIT .|. VK_IMAGE_USAGE_SAMPLED_BIT) VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+
+      scope $ do
+        memoryPtr <- track $ mappingMemory dev imageStagingBufferMemory 0 imageBufferSize
+        liftIO . pokeArray memoryPtr . SV.toList . imageData $ sampleImageData
+
       descriptorSetLayout <- track $ withDescriptorSetLayout dev zeroBits [ DescriptorSetLayoutBinding { binding = 0
                                                                                                        , descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
                                                                                                        , descriptorCount = 1
                                                                                                        , stageFlags = VK_SHADER_STAGE_VERTEX_BIT
-                                                                                                       , immutableSamplers = []
+                                                                                                       , immutableSamplers = Nothing
+                                                                                                       }
+                                                                          , DescriptorSetLayoutBinding { binding = 1
+                                                                                                       , descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+                                                                                                       , descriptorCount = 1
+                                                                                                       , stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
+                                                                                                       , immutableSamplers = Nothing
                                                                                                        }
                                                                           ]
 
@@ -477,37 +584,110 @@ main = scope $ do
 
       commandPool <- track $ withCommandPool dev zeroBits 0
 
-      scope $ do
-        [copyBuffer] <- track $ withCommandBuffers dev commandPool VK_COMMAND_BUFFER_LEVEL_PRIMARY 1
-        recordCommandBuffer VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT copyBuffer
-          [ CopyBuffer vertexStagingBuffer vertexBuffer [ VkBufferCopy { vkSrcOffset = 0, vkDstOffset = 0, vkSize = vertexBufferSize } ]
-          ]
+      oneshot dev graphicsQueue commandPool
+        [ CopyBuffer vertexStagingBuffer vertexBuffer [ VkBufferCopy { vkSrcOffset = 0, vkDstOffset = 0, vkSize = vertexBufferSize } ]
+        ]
 
-        queueSubmit [ SubmitInfo { waitSemaphores = []
-                                , commandBuffers = [ copyBuffer ]
-                                , signalSemaphores = []
-                                }
-                    ] VK_NULL_HANDLE graphicsQueue
-        queueWaitIdle graphicsQueue
+      oneshot dev graphicsQueue commandPool
+        [ CopyBuffer indexStagingBuffer indexBuffer [ VkBufferCopy { vkSrcOffset = 0, vkDstOffset = 0, vkSize = indexBufferSize } ]
+        ]
 
-      scope $ do
-        [copyBuffer] <- track $ withCommandBuffers dev commandPool VK_COMMAND_BUFFER_LEVEL_PRIMARY 1
-        recordCommandBuffer VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT copyBuffer
-          [ CopyBuffer indexStagingBuffer indexBuffer [ VkBufferCopy { vkSrcOffset = 0, vkDstOffset = 0, vkSize = indexBufferSize } ]
-          ]
+      oneshot dev graphicsQueue commandPool
+        [ PipelineBarrier VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
+                          VK_PIPELINE_STAGE_TRANSFER_BIT
+                          zeroBits
+                          []
+                          []
+                          [ ImageMemoryBarrier { srcAccessMask = zeroBits
+                                               , dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT
+                                               , oldLayout = VK_IMAGE_LAYOUT_UNDEFINED
+                                               , newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+                                               , srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED
+                                               , dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED
+                                               , image = imageImage
+                                               , subresourceRange = IV.VkImageSubresourceRange { vkAspectMask = VK_IMAGE_ASPECT_COLOR_BIT
+                                                                                               , vkBaseMipLevel = 0
+                                                                                               , vkLevelCount = 1
+                                                                                               , vkBaseArrayLayer = 0
+                                                                                               , vkLayerCount = 1
+                                                                                               }
+                                               }
+                          ]
+        ]
 
-        queueSubmit [ SubmitInfo { waitSemaphores = []
-                                 , commandBuffers = [ copyBuffer ]
-                                 , signalSemaphores = []
-                                 }
-                    ] VK_NULL_HANDLE graphicsQueue
-        queueWaitIdle graphicsQueue
+      oneshot dev graphicsQueue commandPool
+        [ CopyBufferToImage imageStagingBuffer imageImage VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL [ VkBufferImageCopy { vkBufferOffset = 0
+                                                                                                                   , vkBufferRowLength = 0
+                                                                                                                   , vkBufferImageHeight = 0
+                                                                                                                   , vkImageSubresource = VkImageSubresourceLayers { vkAspectMask = VK_IMAGE_ASPECT_COLOR_BIT
+                                                                                                                                                                   , vkMipLevel = 0
+                                                                                                                                                                   , vkBaseArrayLayer = 0
+                                                                                                                                                                   , vkLayerCount = 1
+                                                                                                                                                                   }
+                                                                                                                   , vkImageOffset = VkOffset3D 0 0 0
+                                                                                                                   , vkImageExtent = VkExtent3D (fromIntegral $ imageWidth sampleImageData) (fromIntegral $ imageHeight sampleImageData) 1
+                                                                                                                   }
+                                                                                               ]
+        ]
 
-      frames <- track $ withFrames physDev dev swapchain (S.vkFormat surfaceFormat) commandPool descriptorSetLayout renderPass extent
+      oneshot dev graphicsQueue commandPool
+        [ PipelineBarrier VK_PIPELINE_STAGE_TRANSFER_BIT
+                          VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+                          zeroBits
+                          []
+                          []
+                          [ ImageMemoryBarrier { srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT
+                                               , dstAccessMask = VK_ACCESS_SHADER_READ_BIT
+                                               , oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+                                               , newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                                               , srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED
+                                               , dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED
+                                               , image = imageImage
+                                               , subresourceRange = IV.VkImageSubresourceRange { vkAspectMask = VK_IMAGE_ASPECT_COLOR_BIT
+                                                                                               , vkBaseMipLevel = 0
+                                                                                               , vkLevelCount = 1
+                                                                                               , vkBaseArrayLayer = 0
+                                                                                               , vkLayerCount = 1
+                                                                                               }
+                                               }
+                          ]
+        ]
+
+      imageImageView <- track $ withImageView dev
+                                              IV.VK_IMAGE_VIEW_TYPE_2D
+                                              VK_FORMAT_R8G8B8A8_UNORM
+                                              (IV.VkComponentMapping IV.VK_COMPONENT_SWIZZLE_IDENTITY IV.VK_COMPONENT_SWIZZLE_IDENTITY IV.VK_COMPONENT_SWIZZLE_IDENTITY IV.VK_COMPONENT_SWIZZLE_IDENTITY)
+                                              IV.VkImageSubresourceRange { IV.vkAspectMask = VK_IMAGE_ASPECT_COLOR_BIT
+                                                                         , IV.vkBaseMipLevel = 0
+                                                                         , IV.vkLevelCount = 1
+                                                                         , IV.vkBaseArrayLayer = 0
+                                                                         , IV.vkLayerCount = 1
+                                                                         }
+                                              imageImage
+
+      imageSampler <- track $ withSampler dev SamplerCreateInfo { flags = zeroBits
+                                                                , magFilter = VK_FILTER_LINEAR
+                                                                , minFilter = VK_FILTER_LINEAR
+                                                                , addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT
+                                                                , addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT
+                                                                , addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT
+                                                                , anisotropyEnable = VK_TRUE
+                                                                , maxAnisotropy = 16
+                                                                , borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK
+                                                                , unnormalizedCoordinates = VK_FALSE
+                                                                , compareEnable = VK_FALSE
+                                                                , compareOp = VK_COMPARE_OP_ALWAYS
+                                                                , mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR
+                                                                , mipLodBias = 0.0
+                                                                , minLod = 0.0
+                                                                , maxLod = 0.0
+                                                                }
+
+      frames <- track $ withFrames physDev dev swapchain (S.vkFormat surfaceFormat) commandPool descriptorSetLayout renderPass extent imageImageView imageSampler
 
       forM_ frames $ \Frame{..} ->
         recordCommandBuffer VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT commandBuffer
-          [ BeginRenderPass renderPass framebuffer (VkRect2D (VkOffset2D 0 0) extent) [ VkColor . VkFloat32 $ SV.fromTuple (CFloat 0.0, CFloat 0.0, CFloat 0.0, CFloat 0.0) ] VK_SUBPASS_CONTENTS_INLINE
+          [ BeginRenderPass renderPass framebuffer (VkRect2D (VkOffset2D 0 0) extent) [ VkColor . VkFloat32 $ SSV.fromTuple (CFloat 0.0, CFloat 0.0, CFloat 0.0, CFloat 0.0) ] VK_SUBPASS_CONTENTS_INLINE
           , BindPipeline VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
           , BindVertexBuffers 0 [ VertexBufferBinding { buffer = vertexBuffer, offset = 0 } ]
           , BindIndexBuffer indexBuffer 0 VK_INDEX_TYPE_UINT16
@@ -535,7 +715,7 @@ main = scope $ do
 
           scope $ do
             memoryPtr <- track $ mappingMemory dev uniformBufferMemory 0 (fromIntegral uniformBufferSize)
-            liftIO $ poke memoryPtr UniformBufferObject { model = Linear.Matrix.transpose $ flip mkTransformation (V3 0.0 0.0 0.0) . axisAngle (V3 0.0 0.0 1.0) $ realToFrac elapsed * pi
+            liftIO $ poke memoryPtr UniformBufferObject { model = Linear.Matrix.transpose $ flip mkTransformation (V3 0.0 0.0 0.0) . axisAngle (V3 0.0 0.0 1.0) $ realToFrac elapsed * pi / 2
                                                         , view = Linear.Matrix.transpose $ lookAt (V3 2.0 2.0 2.0) (V3 0.0 0.0 0.0) (V3 0.0 0.0 1.0)
                                                         , proj = (Linear.Matrix.transpose $ perspective (pi / 4.0) (fromIntegral (vkWidth (extent :: VkExtent2D)) / fromIntegral (vkHeight (extent :: VkExtent2D))) 0.1 10.0) & _y._y %~ (*(-1))
                                                         }

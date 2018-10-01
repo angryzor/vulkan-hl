@@ -22,7 +22,7 @@ description:         Please see the README on GitHub at <https://github.com/gith
 dependencies:
 - base >= 4.7 && < 5
 - bytestring
-- GLFW-b
+- data-default-class
 - linear
 - monad-control
 - mtl
@@ -46,10 +46,12 @@ executables:
     - -optl "-Wl,--unresolved-symbols=ignore-in-object-files"
     dependencies:
     - vulkan-hl
+    - GLFW-b
     - ansi-terminal
     - monad-loops
     - time
     - lens
+    - JuicyPixels
 
 tests:
   vulkan-hl-test:

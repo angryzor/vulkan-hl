@@ -21,6 +21,7 @@ import Control.Monad.IO.Class
 import Control.Monad.Trans.Control
 import Data.Bits
 import qualified Data.ByteString.Lazy as BSL
+import Data.Default.Class
 import Data.UUID
 import qualified Data.Vector.Storable.Sized as SV
 import Data.Word
@@ -44,6 +45,65 @@ import Util
 --     , enabledLayers :: f1 String
 --     , enabledExtensions :: f2 String
 --     } -> InstanceCreateInfo
+
+instance Default VkPhysicalDeviceFeatures where
+  def =
+    VkPhysicalDeviceFeatures { vkRobustBufferAccess = VK_FALSE
+                             , vkFullDrawIndexUint32 = VK_FALSE
+                             , vkImageCubeArray = VK_FALSE
+                             , vkIndependentBlend = VK_FALSE
+                             , vkGeometryShader = VK_FALSE
+                             , vkTessellationShader = VK_FALSE
+                             , vkSampleRateShading = VK_FALSE
+                             , vkDualSrcBlend = VK_FALSE
+                             , vkLogicOp = VK_FALSE
+                             , vkMultiDrawIndirect = VK_FALSE
+                             , vkDrawIndirectFirstInstance = VK_FALSE
+                             , vkDepthClamp = VK_FALSE
+                             , vkDepthBiasClamp = VK_FALSE
+                             , vkFillModeNonSolid = VK_FALSE
+                             , vkDepthBounds = VK_FALSE
+                             , vkWideLines = VK_FALSE
+                             , vkLargePoints = VK_FALSE
+                             , vkAlphaToOne = VK_FALSE
+                             , vkMultiViewport = VK_FALSE
+                             , vkSamplerAnisotropy = VK_FALSE
+                             , vkTextureCompressionETC2 = VK_FALSE
+                             , vkTextureCompressionASTC_LDR = VK_FALSE
+                             , vkTextureCompressionBC = VK_FALSE
+                             , vkOcclusionQueryPrecise = VK_FALSE
+                             , vkPipelineStatisticsQuery = VK_FALSE
+                             , vkVertexPipelineStoresAndAtomics = VK_FALSE
+                             , vkFragmentStoresAndAtomics = VK_FALSE
+                             , vkShaderTessellationAndGeometryPointSize = VK_FALSE
+                             , vkShaderImageGatherExtended = VK_FALSE
+                             , vkShaderStorageImageExtendedFormats = VK_FALSE
+                             , vkShaderStorageImageMultisample = VK_FALSE
+                             , vkShaderStorageImageReadWithoutFormat = VK_FALSE
+                             , vkShaderStorageImageWriteWithoutFormat = VK_FALSE
+                             , vkShaderUniformBufferArrayDynamicIndexing = VK_FALSE
+                             , vkShaderSampledImageArrayDynamicIndexing = VK_FALSE
+                             , vkShaderStorageBufferArrayDynamicIndexing = VK_FALSE
+                             , vkShaderStorageImageArrayDynamicIndexing = VK_FALSE
+                             , vkShaderClipDistance = VK_FALSE
+                             , vkShaderCullDistance = VK_FALSE
+                             , vkShaderFloat64 = VK_FALSE
+                             , vkShaderInt64 = VK_FALSE
+                             , vkShaderInt16 = VK_FALSE
+                             , vkShaderResourceResidency = VK_FALSE
+                             , vkShaderResourceMinLod = VK_FALSE
+                             , vkSparseBinding = VK_FALSE
+                             , vkSparseResidencyBuffer = VK_FALSE
+                             , vkSparseResidencyImage2D = VK_FALSE
+                             , vkSparseResidencyImage3D = VK_FALSE
+                             , vkSparseResidency2Samples = VK_FALSE
+                             , vkSparseResidency4Samples = VK_FALSE
+                             , vkSparseResidency8Samples = VK_FALSE
+                             , vkSparseResidency16Samples = VK_FALSE
+                             , vkSparseResidencyAliased = VK_FALSE
+                             , vkVariableMultisampleRate = VK_FALSE
+                             , vkInheritedQueries = VK_FALSE
+                             }
 
 createInstance :: MonadIO m => String -> Word32 -> String -> Word32 -> [String] -> [String] -> m VkInstance
 createInstance appName appVersion engineName engineVersion layers extensions = liftIO $

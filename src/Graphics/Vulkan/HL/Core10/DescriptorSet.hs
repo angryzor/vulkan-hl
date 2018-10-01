@@ -45,7 +45,7 @@ data DescriptorSetLayoutBinding = DescriptorSetLayoutBinding { binding :: Word32
                                                              , descriptorType :: VkDescriptorType
                                                              , descriptorCount :: Word32
                                                              , stageFlags :: VkShaderStageFlags
-                                                             , immutableSamplers :: [VkSampler]
+                                                             , immutableSamplers :: Maybe [VkSampler]
                                                              }
 
 class DescriptorType a where
@@ -107,7 +107,7 @@ data CopyDescriptorSet = CopyDescriptorSet { srcSet :: VkDescriptorSet
 
 convertDescriptorSetLayoutBinding :: DescriptorSetLayoutBinding -> IO VkDescriptorSetLayoutBinding
 convertDescriptorSetLayoutBinding DescriptorSetLayoutBinding{..} =
-  withArray immutableSamplers $ \immutableSamplersPtr ->
+  maybeWith withArray immutableSamplers $ \immutableSamplersPtr ->
   return $ VkDescriptorSetLayoutBinding { vkBinding = binding
                                         , vkDescriptorType = descriptorType
                                         , vkDescriptorCount = descriptorCount

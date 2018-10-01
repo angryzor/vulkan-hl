@@ -36,8 +36,8 @@ createFence dev flags = liftIO $
   vulkanPtrR $ vkCreateFence dev createInfoPtr nullPtr
 
 destroyFence :: MonadIO m => VkDevice -> VkFence -> m ()
-destroyFence dev commandPool =
-  liftIO $ vkDestroyFence dev commandPool nullPtr
+destroyFence dev fence =
+  liftIO $ vkDestroyFence dev fence nullPtr
 
 withFence :: MonadBaseControl IO m => VkDevice -> VkFenceCreateFlags -> (VkFence -> m a) -> m a
 withFence dev flags =
