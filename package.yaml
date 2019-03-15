@@ -32,6 +32,9 @@ dependencies:
 - vector-sized
 - vulkan
 
+ghc-options:
+- -Wall
+
 library:
   source-dirs: src
 

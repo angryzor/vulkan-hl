@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: e2e4ccc10c2913b7deb444729e615e7c1c6920489277cf8682d278c13d29cd47
+-- hash: 45d4150a81d33135e0616f1b75f1f7be546c0ee8de86ff84f9b880ee4c6627dc
 
 name:           vulkan-hl
 version:        0.1.0.0
@@ -28,6 +28,7 @@ source-repository head
 library
   hs-source-dirs:
       src
+  ghc-options: -Wall
   build-depends:
       base >=4.7 && <5
     , bytestring
@@ -51,6 +52,7 @@ library
       Graphics.Vulkan.HL.Core10.Fence
       Graphics.Vulkan.HL.Core10.Image
       Graphics.Vulkan.HL.Core10.ImageView
+      Graphics.Vulkan.HL.Core10.LayerDiscovery
       Graphics.Vulkan.HL.Core10.Memory
       Graphics.Vulkan.HL.Core10.MemoryManagement
       Graphics.Vulkan.HL.Core10.Pass
@@ -74,7 +76,7 @@ executable vulkan-hl-exe
   main-is: Main.hs
   hs-source-dirs:
       app
-  ghc-options: -threaded -rtsopts -with-rtsopts=-N -optl "-Wl,--unresolved-symbols=ignore-in-object-files"
+  ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N -optl "-Wl,--unresolved-symbols=ignore-in-object-files"
   build-depends:
       GLFW-b
     , JuicyPixels
@@ -103,7 +105,7 @@ test-suite vulkan-hl-test
   main-is: Spec.hs
   hs-source-dirs:
       test
-  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
     , bytestring

@@ -13,6 +13,7 @@ import Control.Exception
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Control
 import Data.Bits
+import Data.Coerce
 import Data.Word
 import Foreign.C.Types
 import Foreign.Ptr
@@ -30,7 +31,7 @@ data DeviceQueueCreateInfo = DeviceQueueCreateInfo { queueFamilyIndex :: Word32
 
 convertDeviceQueueCreateInfo :: DeviceQueueCreateInfo -> IO VkDeviceQueueCreateInfo
 convertDeviceQueueCreateInfo DeviceQueueCreateInfo{..} =
-  withArrayLen (CFloat <$> queuePriorities) $ \queuePrioritiesLen queuePrioritiesPtr ->
+  withArrayLen (coerce <$> queuePriorities) $ \queuePrioritiesLen queuePrioritiesPtr ->
   return $ VkDeviceQueueCreateInfo { vkSType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO
                                    , vkPNext = nullPtr
                                    , vkFlags = zeroBits

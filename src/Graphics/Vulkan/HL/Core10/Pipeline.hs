@@ -23,6 +23,7 @@ import Control.Exception
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Control
 import Data.Bits
+import Data.Coerce
 import qualified Data.Vector.Storable.Sized as SV
 import Data.Word
 import Foreign.C.String
@@ -185,10 +186,10 @@ convertPipelineRasterizationStateCreateInfo PipelineRasterizationStateCreateInfo
                                          , vkCullMode = cullMode
                                          , vkFrontFace = frontFace
                                          , vkDepthBiasEnable = depthBiasEnable
-                                         , vkDepthBiasConstantFactor = CFloat depthBiasConstantFactor
-                                         , vkDepthBiasClamp = CFloat depthBiasClamp
-                                         , vkDepthBiasSlopeFactor = CFloat depthBiasSlopeFactor
-                                         , vkLineWidth = CFloat lineWidth
+                                         , vkDepthBiasConstantFactor = coerce depthBiasConstantFactor
+                                         , vkDepthBiasClamp = coerce depthBiasClamp
+                                         , vkDepthBiasSlopeFactor = coerce depthBiasSlopeFactor
+                                         , vkLineWidth = coerce lineWidth
                                          }
 
 convertPipelineMultisampleStateCreateInfo :: PipelineMultisampleStateCreateInfo -> IO VkPipelineMultisampleStateCreateInfo
@@ -199,7 +200,7 @@ convertPipelineMultisampleStateCreateInfo PipelineMultisampleStateCreateInfo{..}
                                                 , vkFlags = zeroBits
                                                 , vkRasterizationSamples = rasterizationSamples
                                                 , vkSampleShadingEnable = sampleShadingEnable
-                                                , vkMinSampleShading = CFloat minSampleShading
+                                                , vkMinSampleShading = coerce minSampleShading
                                                 , vkPSampleMask = sampleMaskPtr
                                                 , vkAlphaToCoverageEnable = alphaToCoverageEnable
                                                 , vkAlphaToOneEnable = alphaToOneEnable
@@ -217,8 +218,8 @@ convertPipelineDepthStencilStateCreateInfo PipelineDepthStencilStateCreateInfo{.
                                          , vkStencilTestEnable = stencilTestEnable
                                          , vkFront = front
                                          , vkBack = back
-                                         , vkMinDepthBounds = CFloat minDepthBounds
-                                         , vkMaxDepthBounds = CFloat maxDepthBounds
+                                         , vkMinDepthBounds = coerce minDepthBounds
+                                         , vkMaxDepthBounds = coerce maxDepthBounds
                                          }
 
 convertPipelineColorBlendStateCreateInfo :: PipelineColorBlendStateCreateInfo -> IO VkPipelineColorBlendStateCreateInfo
@@ -231,7 +232,7 @@ convertPipelineColorBlendStateCreateInfo PipelineColorBlendStateCreateInfo{..} =
                                                , vkLogicOp = logicOp
                                                , vkAttachmentCount = fromIntegral attachmentsLen
                                                , vkPAttachments = attachmentsPtr
-                                               , vkBlendConstants = let V4 x y z w = blendConstants in SV.fromTuple (CFloat x, CFloat y, CFloat z, CFloat w)
+                                               , vkBlendConstants = let V4 x y z w = blendConstants in SV.fromTuple $ coerce (x, y, z, w)
                                                }
 
 convertPipelineDynamicStateCreateInfo :: PipelineDynamicStateCreateInfo -> IO VkPipelineDynamicStateCreateInfo

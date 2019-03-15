@@ -13,6 +13,7 @@ import Control.Exception
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Control
 import Data.Bits
+import Data.Coerce
 import Data.Word
 import Foreign.C.Types
 import Foreign.Ptr
@@ -54,13 +55,13 @@ createSampler dev SamplerCreateInfo{..} = liftIO $
                            , vkAddressModeU = addressModeU
                            , vkAddressModeV = addressModeV
                            , vkAddressModeW = addressModeW
-                           , vkMipLodBias = CFloat mipLodBias
+                           , vkMipLodBias = coerce mipLodBias
                            , vkAnisotropyEnable = anisotropyEnable
-                           , vkMaxAnisotropy = CFloat maxAnisotropy
+                           , vkMaxAnisotropy = coerce maxAnisotropy
                            , vkCompareEnable = compareEnable
                            , vkCompareOp = compareOp
-                           , vkMinLod = CFloat minLod
-                           , vkMaxLod = CFloat maxLod
+                           , vkMinLod = coerce minLod
+                           , vkMaxLod = coerce maxLod
                            , vkBorderColor = borderColor
                            , vkUnnormalizedCoordinates = unnormalizedCoordinates
                            } $ \createInfoPtr ->
